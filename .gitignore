@@ -1,6 +1,8 @@
 # Node / frontend
 node_modules/
 frontend/dist/
+# Vite writes these temp files when loading a TS config; never commit them.
+frontend/vite.config.ts.timestamp-*
 
 # Go
 /server
