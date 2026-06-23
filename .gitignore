@@ -1,0 +1,29 @@
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# Go
+/server
+backend/server
+backend/optcg
+/optcg
+# go.work is committed (enables `go run ./backend` from root); its sum is not.
+go.work.sum
+
+# Local data & secrets
+*.db
+*.db-shm
+*.db-wal
+data/
+.env
+
+# catalogue.json IS committed (shareable reference data); ignore only the
+# atomic-write temp file and any dev copy under backend/.
+catalogue.json.tmp
+backend/catalogue.json
+
+# Editor / OS
+.claude
+.DS_Store
+.idea/
+.vscode/

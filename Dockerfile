@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+
+# ---- Stage 1: build the TypeScript SPA ----
+FROM node:22-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+# -> /app/frontend/dist
+
+# ---- Stage 2: build the Go server (static, CGO-free) ----
+FROM golang:1.23-alpine AS backend
+WORKDIR /app/backend
+COPY backend/ ./
+# Resolve deps + go.sum, then build a static binary.
+RUN go mod tidy
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /server .
+
+# ---- Stage 3: minimal runtime ----
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
+WORKDIR /app
+COPY --from=backend /server /app/server
+COPY --from=frontend /app/frontend/dist /app/web
+# Bundled catalogue: used to seed /data/catalogue.json on first run, so the app
+# works offline with no API key. A re-sync rewrites the copy on the volume.
+COPY catalogue.json /app/catalogue.json
+ENV PORT=8080 \
+    DB_PATH=/data/onepiece.db \
+    WEB_DIR=/app/web \
+    CATALOGUE_PATH=/data/catalogue.json \
+    CATALOGUE_SEED=/app/catalogue.json
+RUN mkdir -p /data && chown -R app:app /data
+USER app
+VOLUME ["/data"]
+EXPOSE 8080
+CMD ["/app/server"]

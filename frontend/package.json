@@ -1,0 +1,19 @@
+{
+  "name": "optcg-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@awesome.me/webawesome": "3.9.0",
+    "@fortawesome/fontawesome-free": "^6.7.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  }
+}

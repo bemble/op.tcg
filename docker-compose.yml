@@ -1,0 +1,13 @@
+services:
+  one-piece-collect:
+    build: .
+    image: one-piece-collect:latest
+    container_name: one-piece-collect
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - onepiece-data:/data
+
+volumes:
+  onepiece-data:

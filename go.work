@@ -1,0 +1,8 @@
+// Workspace file so the backend module can be run from the repo root:
+//   go run ./backend
+// This lets the local-dev defaults line up — .env, data/ and catalogue.json
+// all sit here at the repo root. Not copied into the Docker image (the build
+// only copies backend/), so it has no effect on production builds.
+go 1.25.0
+
+use ./backend
