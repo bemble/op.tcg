@@ -17,8 +17,10 @@ go.work.sum
 data/
 .env
 
-# catalogue.json IS committed (shareable reference data); ignore only the
-# atomic-write temp file and any dev copy under backend/.
+# catalogue.json is NOT committed: each container rebuilds it on first run
+# via the startup background sync (SYNC_ON_START). Ignore the local dev copy,
+# the atomic-write temp file, and any copy under backend/.
+catalogue.json
 catalogue.json.tmp
 backend/catalogue.json
 

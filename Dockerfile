@@ -23,14 +23,13 @@ RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=backend /server /app/server
 COPY --from=frontend /app/frontend/dist /app/web
-# Bundled catalogue: used to seed /data/catalogue.json on first run, so the app
-# works offline with no API key. A re-sync rewrites the copy on the volume.
-COPY catalogue.json /app/catalogue.json
+# No catalogue is bundled: on first run /data/catalogue.json is absent, so the
+# startup background sync (SYNC_ON_START) rebuilds it from the official card
+# list. Set CATALOGUE_SEED to a bundled JSON if you want offline-first instead.
 ENV PORT=8080 \
     DB_PATH=/data/onepiece.db \
     WEB_DIR=/app/web \
-    CATALOGUE_PATH=/data/catalogue.json \
-    CATALOGUE_SEED=/app/catalogue.json
+    CATALOGUE_PATH=/data/catalogue.json
 RUN mkdir -p /data && chown -R app:app /data
 USER app
 VOLUME ["/data"]
