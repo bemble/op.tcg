@@ -10,12 +10,13 @@ RUN npm run build
 # -> /app/frontend/dist
 
 # ---- Stage 2: build the Go server (static, CGO-free) ----
-FROM golang:1.23-alpine AS backend
+FROM golang:1.25-alpine AS backend
 WORKDIR /app/backend
 COPY backend/ ./
-# Resolve deps + go.sum, then build a static binary.
-RUN go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /server .
+# Download deps verified against the committed go.sum (deterministic, no
+# network mutation of go.mod/go.sum), then build a static binary.
+RUN go mod download
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=readonly -trimpath -ldflags="-s -w" -o /server .
 
 # ---- Stage 3: minimal runtime ----
 FROM alpine:3.20
