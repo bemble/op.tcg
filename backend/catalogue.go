@@ -127,6 +127,47 @@ var familyLabels = map[string]string{
 	"promo": "Promos & autres",
 }
 
+// donSetPrefixCode is the synthetic set that gathers promo/side-product DON!!
+// cards (alternate arts, Double Pack Sets, Special/Tournament packs, film
+// promos, and loose "P" promos). It falls into the "promo" family below.
+const donSetPrefixCode = "DON"
+
+// donSideProductMarkers flag DON!! cards that ship in a side product rather than
+// as a set's own DON: the standalone Double Pack Sets, the Special DON!! Card
+// Packs, Tournament packs, and film promos. These are matched against the
+// (lower-cased) card name.
+var donSideProductMarkers = []string{
+	"double pack set",
+	"special don!! card pack",
+	"tournament pack",
+	"promo",
+}
+
+// setPrefix maps a card to the set it's displayed under. For most cards this is
+// just the printed code prefix ("OP16-001" -> "OP16"). DON!! cards are special:
+// a series' own DON — whatever its art (Alternate Art, character, …) — and its
+// Gold stay in that series, but side-product DONs (Double Pack Sets, Special
+// packs, Tournament packs, film promos) and loose "P" promos are consolidated
+// into the dedicated "DON" set (filed under Promos & autres). The card's
+// code/id is never rewritten, so ownership stays intact — this only changes
+// which bucket the card is grouped into.
+func setPrefix(code, rarity, name string) string {
+	p := codePrefix(code)
+	if rarity != "DON!!" {
+		return p
+	}
+	if p == "P" {
+		return donSetPrefixCode // loose promo DONs
+	}
+	n := strings.ToLower(name)
+	for _, m := range donSideProductMarkers {
+		if strings.Contains(n, m) {
+			return donSetPrefixCode
+		}
+	}
+	return p // the series' own DON (any art) and its Gold
+}
+
 func setFamily(prefix string) string {
 	switch strings.TrimRight(prefix, "0123456789") {
 	case "OP":
@@ -200,10 +241,13 @@ func (c *Catalogue) set(cards []Card, syncedAt string) {
 	// code (prefer the base card whose id equals the code over its parallels).
 	sets := map[string]*setAgg{}
 	for _, card := range deduped {
-		prefix := codePrefix(card.Code)
+		prefix := setPrefix(card.Code, card.Rarity, card.Name)
 		agg := sets[prefix]
 		if agg == nil {
 			agg = &setAgg{prefix: prefix}
+			if prefix == donSetPrefixCode {
+				agg.name = "DON!!" // synthetic set; its cards carry no SetName
+			}
 			sets[prefix] = agg
 		}
 		if agg.name == "" && card.SetName != "" {

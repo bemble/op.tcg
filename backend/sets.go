@@ -24,7 +24,7 @@ func (s *server) ownedCountsForGoal(byCard map[string][]Item, goal string) map[s
 		if !inGoal(parallelLevel(cardID, c.Code), goal) {
 			continue
 		}
-		counts[codePrefix(c.Code)]++
+		counts[setPrefix(c.Code, c.Rarity, c.Name)]++
 	}
 	return counts
 }

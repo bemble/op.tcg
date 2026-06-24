@@ -93,7 +93,7 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, it := range items {
-		rarity, code := "—", it.CardID
+		rarity, code, name := "—", it.CardID, ""
 		if c, ok := s.cat.Get(it.CardID); ok {
 			if c.Rarity != "" {
 				rarity = c.Rarity
@@ -101,10 +101,12 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 			if c.Code != "" {
 				code = c.Code
 			}
+			name = c.Name
 		}
+		prefix := setPrefix(code, rarity, name)
 		// Family is the only hard filter: the inventory breakdowns cover every
 		// owned variant (parallels, gold) of the selected families.
-		if !fams[setFamily(codePrefix(code))] {
+		if !fams[setFamily(prefix)] {
 			continue
 		}
 
@@ -123,7 +125,7 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 		// Completion accounting is restricted to cards counting toward the goal.
 		if inGoal(parallelLevel(it.CardID, code), goal) {
 			goalOwned[it.CardID] = true
-			add(prefixCards, codePrefix(code), it.CardID)
+			add(prefixCards, prefix, it.CardID)
 		}
 	}
 
