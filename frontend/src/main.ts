@@ -119,11 +119,18 @@ function initLightbox() {
     const full = img.getAttribute("data-full")!;
     if (!lightbox) {
       lightbox = document.createElement("wa-dialog");
-      lightbox.setAttribute("label", "");
+      // No title for the lightbox, so drop the header entirely (otherwise it
+      // leaves an empty bar). Light dismiss lets clicking the backdrop close it;
+      // we add our own floating close button since the header one is gone.
+      lightbox.setAttribute("without-header", "");
+      lightbox.setAttribute("light-dismiss", "");
       lightbox.classList.add("lightbox");
       document.body.appendChild(lightbox);
     }
-    lightbox.innerHTML = `<img class="lightbox-img" src="${esc(full)}" alt="${esc(img.alt)}" />`;
+    // data-dialog="close" is what wa-dialog wires up to close itself.
+    lightbox.innerHTML = `
+      <wa-button class="lightbox-close" appearance="plain" data-dialog="close" aria-label="Fermer">×</wa-button>
+      <img class="lightbox-img" src="${esc(full)}" alt="${esc(img.alt)}" />`;
     (lightbox as any).open = true;
   });
 }

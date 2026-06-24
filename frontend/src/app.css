@@ -60,7 +60,9 @@ body {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  /* Cap the min track at half the row (minus the gap) so we always fit at
+     least 2 columns, even on narrow screens where 180px would force one. */
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, (100% - 1rem) / 2), 1fr));
   gap: 1rem;
 }
 .grid .span {
@@ -258,6 +260,43 @@ img.card-img {
   width: 100%;
   height: auto;
   border-radius: var(--wa-border-radius-m, 6px);
+}
+.lightbox::part(dialog) {
+  overflow: visible;
+}
+/* The body part defaults to overflow:auto, which clips the close button when
+   it's translated onto the corner. Make it visible so the button can spill out. */
+.lightbox::part(body) {
+  position: relative;
+  padding: 0;
+  overflow: visible;
+}
+.lightbox-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  /* Center the button on the dialog's top-right corner. */
+  transform: translate(50%, -50%);
+  z-index: 1;
+  font-size: 1.4rem;
+  line-height: 1;
+  border-radius: 50%;
+}
+/* Dark pill so the white cross stays visible over light card art. */
+.lightbox-close::part(base) {
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lightbox-close::part(base):hover {
+  background: rgba(0, 0, 0, 0.9);
 }
 .card-img.placeholder {
   display: flex;
@@ -621,6 +660,17 @@ img.card-img {
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+/* On mobile, give the tools their own full-width row: edit/batch group pinned
+   left, everything else (filters, parallels, view toggle) pushed right. */
+@media (max-width: 600px) {
+  .set-display-options {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .set-display-options .icon-group {
+    margin-right: auto;
+  }
 }
 /* Filters sit on their own row below the title (hidden by default). */
 .set-filters {
