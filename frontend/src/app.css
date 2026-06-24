@@ -298,6 +298,11 @@ img.card-img {
 .lightbox-close::part(base):hover {
   background: rgba(0, 0, 0, 0.9);
 }
+/* wa-tab-group gives the active panel a top/bottom --wa-space-xl padding; drop
+   the top so the panel content sits right under the tab nav. */
+wa-tab-panel::part(base) {
+  padding-top: 0;
+}
 .card-img.placeholder {
   display: flex;
   align-items: center;

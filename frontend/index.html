@@ -2,9 +2,18 @@
 <html lang="fr" class="wa-theme-default wa-palette-default">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/png" href="/icon-white.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Installable standalone web app. The manifest's scope keeps every in-app
+         navigation inside the home-screen window; without it iOS hands off to
+         Safari (address bar + back button) as soon as the URL path changes. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="op.tcg" />
+    <meta name="theme-color" content="#0a0a0a" />
     <title>op.tcg</title>
     <!-- Follow the OS light/dark preference. Inline + synchronous so the right
          theme class is on <html> before first paint (no flash), and it tracks
