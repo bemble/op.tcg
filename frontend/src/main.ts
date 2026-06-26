@@ -178,7 +178,19 @@ function toast(message: string, variant: "success" | "danger" = "success") {
 
 // ---------- shell ----------
 
+// Register the service worker so Chrome on Android installs a real WebAPK
+// (using the maskable manifest icon) rather than a white-circle shortcut.
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* installability is a nice-to-have; ignore registration failures */
+    });
+  });
+}
+
 async function boot() {
+  registerServiceWorker();
   initLightbox();
   app.innerHTML = `<div class="loading"><wa-spinner></wa-spinner></div>`;
   let sync;
