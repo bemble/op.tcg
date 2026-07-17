@@ -4,17 +4,25 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // rarityBucket groups an owned card for the "by rarity" stat: base cards keep
-// their rarity; parallels become "P1"/"P2"/…; DON!! splits standard vs gold.
-func rarityBucket(cardID, code, rarity string) string {
+// their rarity; parallels become "P1"/"P2"/…; DON!! splits standard / foil /
+// gold by name (the edition isn't derivable from the parallel level alone,
+// since PRB foils and non-PRB golds both sit at level 1).
+func rarityBucket(cardID, code, rarity, name string) string {
 	level := parallelLevel(cardID, code)
 	if rarity == "DON!!" {
-		if level > 0 {
+		n := strings.ToLower(name)
+		switch {
+		case strings.Contains(n, "(gold)"):
 			return "DON!! Gold"
+		case strings.Contains(n, "(foil)"):
+			return "DON!! Foil"
+		default:
+			return "DON!!"
 		}
-		return "DON!!"
 	}
 	if level > 0 {
 		return "P" + strconv.Itoa(level)
@@ -22,10 +30,13 @@ func rarityBucket(cardID, code, rarity string) string {
 	return rarity
 }
 
-// rarityRank orders the buckets: base rarities, then parallels, then DON, gold.
+// rarityRank orders the buckets: base rarities, then parallels, then DON,
+// foil, gold.
 func rarityRank(label string) int {
 	switch {
 	case label == "DON!! Gold":
+		return 5
+	case label == "DON!! Foil":
 		return 4
 	case label == "DON!!":
 		return 3
@@ -120,7 +131,7 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 		add(ownerCards, ownerName, it.CardID)
 		ownerCopies[ownerName] += it.Quantity
 		langCopies[it.Language] += it.Quantity
-		add(rarityCards, rarityBucket(it.CardID, code, rarity), it.CardID)
+		add(rarityCards, rarityBucket(it.CardID, code, rarity, name), it.CardID)
 
 		// Completion accounting is restricted to cards counting toward the goal.
 		if inGoal(parallelLevel(it.CardID, code), goal) {

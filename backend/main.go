@@ -45,6 +45,11 @@ func main() {
 
 	s := &server{cfg: cfg, st: st, cat: cat}
 
+	// Merge curated extras (built-in + user-added) into the catalogue.
+	if err := s.refreshCuratedExtra(); err != nil {
+		log.Printf("curated cards: %v", err)
+	}
+
 	// Refresh the catalogue from the official site on startup (background, so
 	// the server serves the existing catalogue immediately). Skipped when the
 	// catalogue is already fresh — see catalogueStale / SYNC_MAX_AGE_HOURS.
@@ -104,6 +109,10 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /api/settings", s.handleUpdateSettings)
+
+	mux.HandleFunc("GET /api/curated", s.handleListCurated)
+	mux.HandleFunc("POST /api/curated", s.handleAddCurated)
+	mux.HandleFunc("DELETE /api/curated/{id}", s.handleDeleteCurated)
 
 	// Any unmatched /api/* path returns a clean JSON 404 instead of falling
 	// through to the SPA handler (which would return HTML, or — with an empty

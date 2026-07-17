@@ -106,4 +106,20 @@ export const api = {
     req<Owner>("/api/owners", { method: "POST", body: JSON.stringify({ name }) }),
   deleteOwner: (id: number) =>
     req<void>(`/api/owners/${id}`, { method: "DELETE" }),
+
+  // curated cards (cards our sources miss, added from a TCGplayer product URL)
+  listCurated: () => req<CuratedCard[]>("/api/curated"),
+  addCurated: (url: string) =>
+    req<CuratedCard>("/api/curated", { method: "POST", body: JSON.stringify({ url }) }),
+  deleteCurated: (cardId: string) =>
+    req<void>(`/api/curated/${encodeURIComponent(cardId)}`, { method: "DELETE" }),
 };
+
+export interface CuratedCard {
+  cardId: string;
+  code: string;
+  name: string;
+  rarity: string;
+  productId: number;
+  image: string;
+}

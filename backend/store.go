@@ -287,6 +287,72 @@ func (s *Store) DeleteItem(id int64) error {
 	return err
 }
 
+// RemapCardIDs rewrites owned possessions whose card_id changed (e.g. PRB DON
+// golds moving from _p1 to _p2). Returns the number of rows updated. New ids are
+// freshly minted so collisions with the (card_id, language, owner_id) unique
+// index don't occur in practice; runs idempotently (no-op once migrated).
+func (s *Store) RemapCardIDs(remap map[string]string) (int, error) {
+	if len(remap) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	n := 0
+	for oldID, newID := range remap {
+		if oldID == newID {
+			continue
+		}
+		res, err := tx.Exec(`UPDATE collection_items
+			SET card_id=?, updated_at=datetime('now') WHERE card_id=?`, newID, oldID)
+		if err != nil {
+			return n, err
+		}
+		c, _ := res.RowsAffected()
+		n += int(c)
+	}
+	if err := tx.Commit(); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+// ---- curated cards ----
+
+// ListCuratedCards returns the user-added cards, newest first.
+func (s *Store) ListCuratedCards() ([]curatedCard, error) {
+	rows, err := s.db.Query(`SELECT card_id, code, name, rarity, product_id
+		FROM curated_cards ORDER BY created_at DESC, card_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []curatedCard{}
+	for rows.Next() {
+		var c curatedCard
+		if err := rows.Scan(&c.cardID, &c.code, &c.name, &c.rarity, &c.productID); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// AddCuratedCard inserts a curated card (fails if its card_id already exists).
+func (s *Store) AddCuratedCard(c curatedCard) error {
+	_, err := s.db.Exec(`INSERT INTO curated_cards (card_id, code, name, rarity, product_id)
+		VALUES (?, ?, ?, ?, ?)`, c.cardID, c.code, c.name, c.rarity, c.productID)
+	return err
+}
+
+// DeleteCuratedCard removes a curated card by its card_id.
+func (s *Store) DeleteCuratedCard(cardID string) error {
+	_, err := s.db.Exec(`DELETE FROM curated_cards WHERE card_id=?`, cardID)
+	return err
+}
+
 // ---- stats ----
 
 type OwnerStat struct {

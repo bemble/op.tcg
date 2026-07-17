@@ -32,3 +32,15 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ''
 );
+
+-- User-added cards our automated sources miss (e.g. TCGplayer-only promo alt
+-- arts). Merged into the in-memory catalogue as "extra" cards; image comes from
+-- the TCGplayer product id. card_id is the (possibly suffixed) catalogue id.
+CREATE TABLE IF NOT EXISTS curated_cards (
+    card_id    TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    rarity     TEXT NOT NULL DEFAULT 'PR',
+    product_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

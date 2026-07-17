@@ -94,7 +94,9 @@ type Catalogue struct {
 	path string
 
 	mu       sync.RWMutex
-	cards    []Card          // sorted by code, then name
+	base     []Card          // synced cards (official + DON); persisted to JSON
+	extra    []Card          // curated extras (built-in + DB); NOT persisted
+	cards    []Card          // base+extra merged, sorted by code then name
 	byID     map[string]Card // card_id -> card
 	sets     map[string]*setAgg
 	setOrder []string // set prefixes in display order
@@ -217,14 +219,37 @@ func LoadCatalogue(path, seed string) (*Catalogue, error) {
 	return c, nil
 }
 
-// set replaces the in-memory state (caller must hold no lock).
+// set replaces the synced base cards and rebuilds (caller holds no lock).
 func (c *Catalogue) set(cards []Card, syncedAt string) {
-	byID := make(map[string]Card, len(cards))
-	for _, card := range cards {
-		if card.CardID == "" {
-			continue
+	c.mu.Lock()
+	c.base = cards
+	c.syncedAt = syncedAt
+	c.rebuildLocked()
+	c.mu.Unlock()
+}
+
+// SetExtra replaces the curated extra cards (built-in + DB) and rebuilds. These
+// merge into the catalogue live and are never written to catalogue.json.
+func (c *Catalogue) SetExtra(extra []Card) {
+	c.mu.Lock()
+	c.extra = extra
+	c.rebuildLocked()
+	c.mu.Unlock()
+}
+
+// rebuildLocked recomputes the merged view (cards/byID/sets) from base+extra.
+// Extra cards override base on a cardId collision. Caller must hold c.mu.
+func (c *Catalogue) rebuildLocked() {
+	byID := make(map[string]Card, len(c.base)+len(c.extra))
+	for _, card := range c.base {
+		if card.CardID != "" {
+			byID[card.CardID] = card
 		}
-		byID[card.CardID] = card
+	}
+	for _, card := range c.extra {
+		if card.CardID != "" {
+			byID[card.CardID] = card
+		}
 	}
 	deduped := make([]Card, 0, len(byID))
 	for _, card := range byID {
@@ -261,13 +286,10 @@ func (c *Catalogue) set(cards []Card, syncedAt string) {
 	}
 	sort.Slice(order, func(i, j int) bool { return setLess(order[i], order[j]) })
 
-	c.mu.Lock()
 	c.cards = deduped
 	c.byID = byID
 	c.sets = sets
 	c.setOrder = order
-	c.syncedAt = syncedAt
-	c.mu.Unlock()
 }
 
 // setLess orders set prefixes for display: families in a fixed priority
@@ -375,7 +397,7 @@ func (c *Catalogue) Replace(cards []Card, syncedAt string) error {
 
 func (c *Catalogue) save() error {
 	c.mu.RLock()
-	f := catalogueFile{SyncedAt: c.syncedAt, Count: len(c.cards), Cards: c.cards}
+	f := catalogueFile{SyncedAt: c.syncedAt, Count: len(c.base), Cards: c.base}
 	c.mu.RUnlock()
 
 	data, err := json.MarshalIndent(f, "", " ")

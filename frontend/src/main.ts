@@ -15,10 +15,11 @@ import "@awesome.me/webawesome/dist/components/tab/tab.js";
 import "@awesome.me/webawesome/dist/components/tab-panel/tab-panel.js";
 import "@awesome.me/webawesome/dist/components/callout/callout.js";
 import "@awesome.me/webawesome/dist/components/dialog/dialog.js";
+import "@awesome.me/webawesome/dist/components/details/details.js";
 
 import "./icons"; // registers the offline Font Awesome "fa" <wa-icon> library
 import "./app.css";
-import { api } from "./api";
+import { api, type CuratedCard } from "./api";
 import {
   COLLECTION_GOALS,
   FAMILIES,
@@ -61,23 +62,24 @@ function proxied(src: string, width?: number): string {
   return url;
 }
 
-function imgTag(card: Card): string {
+function imgTag(card: Card, zoom = true): string {
   const raw = card.imageSmall || card.imageLarge || "";
   if (!raw) return `<div class="card-img placeholder">Pas d'image</div>`;
   // data-full points at the full-size proxied image; a delegated click handler
-  // opens it in a lightbox (see initLightbox).
-  return `<img class="card-img" src="${esc(proxied(raw))}" alt="${esc(card.name)}" loading="lazy"
-    data-full="${esc(proxied(raw, 0))}"
+  // opens it in a lightbox (see initLightbox). Omitted where the click is used
+  // for something else (set-detail tiles open the manage dialog instead).
+  const full = zoom ? ` data-full="${esc(proxied(raw, 0))}"` : "";
+  return `<img class="card-img" src="${esc(proxied(raw))}" alt="${esc(card.name)}" loading="lazy"${full}
     onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'card-img placeholder',textContent:'Hors-ligne / pas d\\'image'}))" />`;
 }
 
 // A compact thumbnail for the list view. Carries data-full so the same
 // lightbox handler zooms it, like the grid tiles.
-function thumbTag(card: Card): string {
+function thumbTag(card: Card, zoom = true): string {
   const raw = card.imageSmall || card.imageLarge || "";
   if (!raw) return `<div class="list-thumb placeholder"></div>`;
-  return `<img class="list-thumb" src="${esc(proxied(raw, 80))}" alt="${esc(card.name)}" loading="lazy"
-    data-full="${esc(proxied(raw, 0))}" />`;
+  const full = zoom ? ` data-full="${esc(proxied(raw, 0))}"` : "";
+  return `<img class="list-thumb" src="${esc(proxied(raw, 80))}" alt="${esc(card.name)}" loading="lazy"${full} />`;
 }
 
 // ---- grid / list view toggle (shared by the set detail and search) ----
@@ -145,6 +147,21 @@ function langOptions(selected: string): string {
   return LANGUAGES.map(
     (v) => `<wa-option value="${v}"${v === selected ? " selected" : ""}>${langLabel(v)}</wa-option>`,
   ).join("");
+}
+
+// Flags of the languages a card is owned in, scoped to the active owner filter
+// (0 = everyone). Ordered EN, FR, JP. Empty string when not owned.
+function ownedFlags(c: SetCard): string {
+  const owner = activeOwner();
+  const langs = new Set(
+    (c.items || []).filter((it) => !owner || it.ownerId === owner).map((it) => it.language),
+  );
+  const flags = LANGUAGES.filter((l) => langs.has(l)).map((l) => LANG_FLAGS[l] ?? l);
+  // Include any exotic language not in the known list, just in case.
+  langs.forEach((l) => {
+    if (!LANGUAGES.includes(l)) flags.push(l);
+  });
+  return flags.join(" ");
 }
 
 // Owner <wa-option>s, with an "unspecified" entry mapped to value "".
@@ -325,6 +342,8 @@ function rarityBadge(label: string): string {
   let cls = "rb-white";
   if (label === "SEC" || label === "DON!! Gold") {
     cls = "rb-gold";
+  } else if (label === "DON!! Foil") {
+    cls = "rb-foil";
   } else {
     const m = /^P(\d+)$/.exec(label);
     if (m) cls = `rb-p${Math.min(Number(m[1]), 4)}`;
@@ -416,7 +435,6 @@ async function renderStats() {
 
 // null = sets overview; a code = that set's detail.
 let colSet: string | null = null;
-let editMode = false; // off = browse/zoom only; on = add/edit/remove
 let batchAdd = false; // select many cards, then add in one go (per-row in list, global owner/lang in grid)
 
 // Set-detail display options (persisted in localStorage).
@@ -438,6 +456,10 @@ function cardSortRank(c: SetCard): number {
 // Owner filter: 0 = everyone. When set to an owner, cards that owner doesn't
 // have are shown greyed (as missing), not hidden.
 let setOwner = parseInt(localStorage.getItem("setOwner") || "0", 10) || 0;
+
+// The set detail currently displayed, kept so a mutation can patch a single
+// tile in place instead of tearing down and refetching the whole view.
+let activeDetail: SetDetail | null = null;
 
 // effectiveCard recomputes owned/quantity from the point of view of one owner
 // (keeping items intact for the manage dialog). ownerId 0 = aggregate (all).
@@ -465,6 +487,7 @@ function errCallout(e: unknown): string {
 
 async function renderSetsOverview() {
   colSet = null;
+  activeDetail = null;
   const host = document.querySelector<HTMLDivElement>("#collection")!;
   host.innerHTML = `<div class="loading"><wa-spinner></wa-spinner></div>`;
   let sets;
@@ -557,6 +580,7 @@ async function renderSetDetail(code: string) {
     host.innerHTML = errCallout(e);
     return;
   }
+  activeDetail = detail;
   const pct = detail.total ? Math.round((detail.owned / detail.total) * 100) : 0;
   host.innerHTML = `
     <div class="set-detail-head">
@@ -566,10 +590,7 @@ async function renderSetDetail(code: string) {
         <span class="muted small" id="set-progress">· ${detail.owned}/${detail.total} (${pct}%)</span>
       </div>
       <div class="set-display-options">
-        <span class="icon-group">
-          <button type="button" id="edit-mode" class="icon-toggle edit-toggle${editMode ? " active" : ""}" title="Mode édition" aria-label="Mode édition" aria-pressed="${editMode}"><wa-icon library="fa" name="pen-to-square"></wa-icon></button>
-          <button type="button" id="batch-mode" class="icon-toggle batch-toggle${batchAdd ? " active" : ""}" title="Ajout par lot" aria-label="Ajout par lot" aria-pressed="${batchAdd}"><wa-icon library="fa" name="list-check"></wa-icon></button>
-        </span>
+        <button type="button" id="batch-mode" class="icon-toggle batch-toggle${batchAdd ? " active" : ""}" title="Ajout par lot" aria-label="Ajout par lot" aria-pressed="${batchAdd}"><wa-icon library="fa" name="list-check"></wa-icon></button>
         <button type="button" id="filters-toggle" class="icon-toggle${showFilters ? " active" : ""}" title="Filtres" aria-label="Afficher/masquer les filtres" aria-pressed="${showFilters}"><wa-icon library="fa" name="filter"></wa-icon></button>
         <button type="button" id="par-end" class="icon-toggle${parallelsAtEnd ? " active" : ""}" title="Parallèles à la fin" aria-label="Parallèles à la fin" aria-pressed="${parallelsAtEnd}"><wa-icon library="fa" name="layer-group"></wa-icon></button>
         ${viewToggle()}
@@ -637,7 +658,6 @@ async function renderSetDetail(code: string) {
     },
     () => parallelsAtEnd,
   );
-  toggleBtn("edit-mode", (v) => (editMode = v), () => editMode);
   toggleBtn("batch-mode", (v) => (batchAdd = v), () => batchAdd);
   paintSetGrid(detail);
 }
@@ -652,12 +672,7 @@ function paintSetGrid(detail: SetDetail) {
   let cards = detail.cards.map((c) => effectiveCard(c, owner));
 
   // Header progress reflects the (owner-scoped) in-goal completion.
-  const ownedInGoal = cards.filter((c) => c.inGoal && c.owned).length;
-  const pct = detail.total ? Math.round((ownedInGoal / detail.total) * 100) : 0;
-  const prog = document.querySelector("#set-progress");
-  if (prog) prog.textContent = `· ${ownedInGoal}/${detail.total} (${pct}%)`;
-  const bar = document.querySelector<HTMLDivElement>("#set-bar");
-  if (bar) bar.style.width = `${pct}%`;
+  updateSetProgress(detail);
 
   if (ownFilter === "owned") cards = cards.filter((c) => c.owned);
   else if (ownFilter === "missing") cards = cards.filter((c) => !c.owned);
@@ -685,13 +700,103 @@ function paintSetGrid(detail: SetDetail) {
     wireBatchRows();
     return;
   }
-  // The image zooms via the global lightbox (like Search). In edit mode each
-  // tile/row gets an explicit button to add/edit/remove.
-  cards.forEach((c) =>
-    grid
-      .querySelector(`[data-id="${cssId(c.cardId)}"] .set-edit-btn`)
-      ?.addEventListener("click", () => openCardDialog(c)),
-  );
+  // Grid: the whole tile opens the add/manage dialog. List: the row's action
+  // button does (the thumbnail still zooms via the global lightbox).
+  cards.forEach((c) => {
+    const el = grid.querySelector(`[data-id="${cssId(c.cardId)}"]`);
+    if (el) wireCardActivate(el, c);
+  });
+}
+
+// Wire the "open add/manage dialog" gesture: the whole tile (grid) or row
+// (list) is clickable / keyboard-activable.
+function wireCardActivate(el: Element, c: SetCard) {
+  el.addEventListener("click", () => openCardDialog(c));
+  el.addEventListener("keydown", (e) => {
+    const k = (e as KeyboardEvent).key;
+    if (k === "Enter" || k === " ") {
+      e.preventDefault();
+      openCardDialog(c);
+    }
+  });
+}
+
+// Owner currently in effect (0 = aggregate), guarding a stale saved owner id.
+function activeOwner(): number {
+  return setOwner && state.owners.some((o) => o.id === setOwner) ? setOwner : 0;
+}
+
+// Update just the set header counter + progress bar from the current model.
+function updateSetProgress(detail: SetDetail) {
+  const owner = activeOwner();
+  const ownedInGoal = detail.cards
+    .map((c) => effectiveCard(c, owner))
+    .filter((c) => c.inGoal && c.owned).length;
+  const pct = detail.total ? Math.round((ownedInGoal / detail.total) * 100) : 0;
+  const prog = document.querySelector("#set-progress");
+  if (prog) prog.textContent = `· ${ownedInGoal}/${detail.total} (${pct}%)`;
+  const bar = document.querySelector<HTMLDivElement>("#set-bar");
+  if (bar) bar.style.width = `${pct}%`;
+}
+
+// Local model edits on the active set detail, so a mutation can update state
+// without refetching. Keyed by cardId (the original detail card, not a copy).
+// Also refreshes the aggregate owned/quantity fields (used by the all-owners
+// view), which the backend computes but effectiveCard doesn't recompute at
+// owner 0 — without this the tile repaints with its stale (pre-mutation) state.
+function recomputeAggregate(card: SetCard) {
+  const items = card.items || [];
+  card.quantity = items.reduce((n, it) => n + it.quantity, 0);
+  card.owned = items.length > 0;
+}
+function cardItemsUpsert(cardId: string, item: Item) {
+  const card = activeDetail?.cards.find((c) => c.cardId === cardId);
+  if (!card) return;
+  const items = card.items ? [...card.items] : [];
+  const i = items.findIndex((x) => x.id === item.id);
+  if (i >= 0) items[i] = item;
+  else items.push(item);
+  card.items = items;
+  recomputeAggregate(card);
+}
+function cardItemsRemove(cardId: string, id: number) {
+  const card = activeDetail?.cards.find((c) => c.cardId === cardId);
+  if (!card?.items) return;
+  card.items = card.items.filter((x) => x.id !== id);
+  recomputeAggregate(card);
+}
+
+// After a possession mutation, repaint only the affected card's tile/row and the
+// header progress — no spinner, no refetch, scroll preserved. Falls back to a
+// full repaint for the cases a single-node swap can't express (batch mode, or a
+// card not currently in the DOM).
+function refreshCardInPlace(cardId: string) {
+  const detail = activeDetail;
+  const grid = document.querySelector<HTMLDivElement>("#set-grid");
+  const card = detail?.cards.find((c) => c.cardId === cardId);
+  if (!detail || !grid || batchAdd || !card) {
+    refreshCollection();
+    return;
+  }
+  const eff = effectiveCard(card, activeOwner());
+  const node = grid.querySelector(`[data-id="${cssId(cardId)}"]`);
+  const visible =
+    (ownFilter === "all" || (ownFilter === "owned" ? eff.owned : !eff.owned)) &&
+    (!goalOnly || eff.inGoal);
+  if (!node) {
+    paintSetGrid(detail); // was filtered out; safest to repaint the grid
+  } else if (!visible) {
+    node.remove();
+  } else {
+    const html = (viewMode === "list" ? setCardRow(eff) : setCardTile(eff)).trim();
+    const tmp = document.createElement("template");
+    tmp.innerHTML = html;
+    const fresh = tmp.content.firstElementChild as HTMLElement;
+    node.replaceWith(fresh);
+    wireCardActivate(fresh, card);
+  }
+  updateSetProgress(detail);
+  refreshStats();
 }
 
 // ---- batch add (list view) ----
@@ -709,7 +814,7 @@ function setBatchRow(c: SetCard): string {
     </div>
     <div class="list-actions add-grid">
       <wa-select class="owner" value="" style="min-width:120px">${ownerOptions(null)}</wa-select>
-      <wa-select class="lang" value="EN" style="width:84px">${langOptions("EN")}</wa-select>
+      <wa-select class="lang" value="EN" style="width:104px">${langOptions("EN")}</wa-select>
       <wa-input class="qty-in" type="number" min="1" value="1" style="width:64px"></wa-input>
       <wa-input class="note-in" placeholder="Commentaire" size="small" style="min-width:140px"></wa-input>
       <label class="batch-check" title="Sélectionner"><input type="checkbox" class="batch-cb"/></label>
@@ -732,7 +837,7 @@ function setBatchTile(c: SetCard): string {
     <div class="set-img-wrap">
       ${img}
       ${alt ? `<span class="alt-art">${esc(alt)}</span>` : ""}
-      ${c.owned ? `<span class="qty-badge">×${c.quantity}</span><span class="own-check">✓</span>` : ""}
+      ${c.owned ? `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>` : ""}
     </div>
     <div class="set-tile-name small" title="${esc(c.name)}">${isDon(c) ? `${cardRarityBadge(c)} ${esc(c.name)}` : `${esc(c.code)} ${cardRarityBadge(c)}`}</div>
   </label>`;
@@ -750,13 +855,12 @@ function paintBatchBar(active: boolean, global: boolean) {
       ${
         global
           ? `<wa-select id="batch-owner" value="" size="small" style="min-width:140px">${ownerOptions(null)}</wa-select>
-             <wa-select id="batch-lang" value="EN" size="small" style="width:90px">${langOptions("EN")}</wa-select>`
+             <wa-select id="batch-lang" value="EN" size="small" style="width:110px">${langOptions("EN")}</wa-select>`
           : ""
       }
-      <wa-button id="batch-add" variant="brand" size="large" disabled>
+      <wa-button id="batch-add" variant="brand" size="small" disabled>
         <wa-icon library="fa" name="plus" slot="start"></wa-icon><span id="batch-add-label">Ajouter la sélection (0)</span>
       </wa-button>
-      <span class="muted small">${global ? "Règle propriétaire &amp; langue, puis coche les cartes." : "Coche les cartes, règle propriétaire / langue / quantité par ligne, puis valide."}</span>
     </div>`;
   bar.querySelector("#batch-add")?.addEventListener("click", () => runBatchAdd(global));
 }
@@ -840,7 +944,13 @@ function isDon(c: Card): boolean {
 
 function altLabel(c: Card): string {
   if (!c.cardId || c.cardId === c.code) return "";
-  if (isDon(c)) return "GOLD"; // a DON whose id differs from its code is the gold variant
+  if (isDon(c)) {
+    // DON edition is in the name (level alone can't tell foil from gold).
+    const n = c.name.toLowerCase();
+    if (n.includes("(gold)")) return "GOLD";
+    if (n.includes("(foil)")) return "FOIL";
+    return "P" + parallelLevel(c);
+  }
   const suffix = c.cardId.slice(c.code.length).replace(/^[_-]+/, "");
   return (suffix || "ALT").toUpperCase();
 }
@@ -857,7 +967,12 @@ function parallelLevel(c: Card): number {
 // parallels → P1/P2…, gold DON → "DON!! Gold", else the base rarity.
 function rarityBucketLabel(c: Card): string {
   const level = parallelLevel(c);
-  if (c.rarity === "DON!!") return level > 0 ? "DON!! Gold" : "DON!!";
+  if (c.rarity === "DON!!") {
+    const n = c.name.toLowerCase();
+    if (n.includes("(gold)")) return "DON!! Gold";
+    if (n.includes("(foil)")) return "DON!! Foil";
+    return "DON!!";
+  }
   if (level > 0) return "P" + level;
   return c.rarity || "";
 }
@@ -869,40 +984,37 @@ function cardRarityBadge(c: Card): string {
 }
 
 function setCardTile(c: SetCard): string {
-  const btn = editMode
-    ? `<wa-button class="set-edit-btn" size="small" appearance="outlined" variant="${c.owned ? "neutral" : "brand"}">${c.owned ? "Gérer" : "Ajouter"}</wa-button>`
-    : "";
   const alt = altLabel(c);
+  // The whole tile is clickable — it opens the add/manage dialog (wired in
+  // paintSetGrid). No zoom on the image so the click isn't captured by the
+  // lightbox.
   return `
-  <div class="tile set-tile ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}">
+  <div class="tile set-tile clickable ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}" role="button" tabindex="0">
     <div class="set-img-wrap">
-      ${imgTag(c)}
+      ${imgTag(c, false)}
       ${alt ? `<span class="alt-art">${esc(alt)}</span>` : ""}
-      ${c.owned ? `<span class="qty-badge">×${c.quantity}</span><span class="own-check">✓</span>` : ""}
+      ${c.owned ? `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>` : ""}
     </div>
     <div class="set-tile-name small" title="${esc(c.name)}">${isDon(c) ? `${cardRarityBadge(c)} ${esc(c.name)}` : `${esc(c.code)} ${cardRarityBadge(c)} · ${esc(c.name)}`}</div>
-    ${btn}
   </div>`;
 }
 
 function setCardRow(c: SetCard): string {
-  // List rows are always actionable (no edit-mode gate), with an icon-only CTA:
-  // ✏️ to manage an owned card, ➕ to add a missing one.
-  const btn = `<wa-button class="set-edit-btn icon-btn" size="small" appearance="outlined" variant="${c.owned ? "neutral" : "brand"}" title="${c.owned ? "Gérer" : "Ajouter"}" aria-label="${c.owned ? "Gérer" : "Ajouter"}"><wa-icon library="fa" name="${c.owned ? "pen-to-square" : "plus"}"></wa-icon></wa-button>`;
+  // The whole row opens the add/manage dialog (wired in paintSetGrid). No zoom
+  // on the thumbnail so the click isn't captured by the lightbox.
   // Distinct named owners (drop unassigned copies), for the list view.
   const owners = [...new Set((c.items || []).map((it) => it.ownerName).filter(Boolean))];
   const ownersTag = owners.length
-    ? ` · <span class="list-owners" title="${esc(owners.join(", "))}">👤 ${esc(owners.join(", "))}</span>`
+    ? ` · <span class="list-owners" title="${esc(owners.join(", "))}">${esc(owners.join(", "))}</span>`
     : "";
   return `
-  <div class="list-row ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}">
-    ${thumbTag(c)}
+  <div class="list-row clickable ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}" role="button" tabindex="0">
+    ${thumbTag(c, false)}
     <div class="list-main">
       <span class="list-code">${isDon(c) ? "" : esc(c.code) + " "}${cardRarityBadge(c)}${c.owned ? ` · ×${c.quantity}` : ""}</span>
       <span class="list-name" title="${esc(c.name)}">${esc(c.name)}</span>
     </div>
-    <div class="list-meta">${c.owned ? `<span class="own-tag">✓</span>` : ""}${ownersTag}</div>
-    <div class="list-actions">${btn}</div>
+    <div class="list-meta">${c.owned ? `<span class="own-flags-inline">${ownedFlags(c)}</span>` : ""}${ownersTag}</div>
   </div>`;
 }
 
@@ -923,30 +1035,33 @@ function openCardDialog(c: SetCard) {
     .join("");
   const imgSrc = c.imageLarge || c.imageSmall || "";
   const img = imgSrc
-    ? `<img class="card-dialog-img" src="${esc(proxied(imgSrc, 360))}" alt="${esc(c.name)}"
+    ? `<img class="card-dialog-img" src="${esc(proxied(imgSrc, 500))}" alt="${esc(c.name)}"
          onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'card-dialog-img placeholder',textContent:'${esc(c.code)}'}))" />`
     : "";
   // Use real possessions (not the owner-filtered `owned`) so managing always
   // shows every owner's copies.
   const anyOwned = (c.items || []).length > 0;
+  // The form is collapsed by default (accordion) to give the card image room;
+  // expand it to set owner/language/quantity/comment before adding.
   dlg.innerHTML = `
     ${img}
     ${anyOwned ? `<div class="poss-list">${possessions}</div><hr class="poss-sep"/>` : ""}
-    <div class="form">
-      <div class="muted small">${anyOwned ? "Ajouter un exemplaire" : "Ajouter à la collection"}</div>
-      <label>Propriétaire
-        <wa-select class="f-owner" value="">${ownerOptions(null)}</wa-select>
-      </label>
-      <label>Langue
-        <wa-select class="f-lang" value="EN">${langOptions("EN")}</wa-select>
-      </label>
-      <label>Quantité
-        <wa-input class="f-qty" type="number" min="1" value="1"></wa-input>
-      </label>
-      <label>Commentaire
-        <wa-textarea class="f-notes" rows="2"></wa-textarea>
-      </label>
-    </div>
+    <wa-details class="add-details" summary="${anyOwned ? "Ajouter un exemplaire" : "Ajouter à la collection"}">
+      <div class="form">
+        <label>Propriétaire
+          <wa-select class="f-owner" value="">${ownerOptions(null)}</wa-select>
+        </label>
+        <label>Langue
+          <wa-select class="f-lang" value="EN">${langOptions("EN")}</wa-select>
+        </label>
+        <label>Quantité
+          <wa-input class="f-qty" type="number" min="1" value="1"></wa-input>
+        </label>
+        <label>Commentaire
+          <wa-textarea class="f-notes" rows="2"></wa-textarea>
+        </label>
+      </div>
+    </wa-details>
     <wa-button slot="footer" class="f-cancel" appearance="outlined">Fermer</wa-button>
     <wa-button slot="footer" class="f-add" variant="brand">Ajouter</wa-button>`;
   document.body.appendChild(dlg);
@@ -962,9 +1077,10 @@ function openCardDialog(c: SetCard) {
     const quantity = parseInt((dlg.querySelector(".f-qty") as any)?.value, 10) || 1;
     const notes = (dlg.querySelector(".f-notes") as any)?.value || "";
     try {
-      await api.addItem({ cardId: c.cardId, ownerId, language, quantity, notes });
+      const item = await api.addItem({ cardId: c.cardId, ownerId, language, quantity, notes });
+      cardItemsUpsert(c.cardId, item);
       close();
-      refreshCollection();
+      refreshCardInPlace(c.cardId);
       toast(`Ajouté : ${c.name}`);
     } catch (e) {
       toast((e as Error).message, "danger");
@@ -975,8 +1091,9 @@ function openCardDialog(c: SetCard) {
     row?.querySelector(".poss-del")?.addEventListener("click", async () => {
       try {
         await api.deleteItem(it.id);
+        cardItemsRemove(c.cardId, it.id);
         close();
-        refreshCollection();
+        refreshCardInPlace(c.cardId);
       } catch (e) {
         toast((e as Error).message, "danger");
       }
@@ -1023,9 +1140,17 @@ function openEditDialog(it: Item) {
     const quantity = parseInt((dlg.querySelector(".f-qty") as any)?.value, 10) || 1;
     const notes = (dlg.querySelector(".f-notes") as any)?.value ?? "";
     try {
-      await api.updateItem(it.id, { ownerId, language, quantity, notes });
-      close();
-      refreshCollection();
+      const updated = await api.updateItem(it.id, { ownerId, language, quantity, notes });
+      const cid = it.card?.cardId;
+      if (cid) {
+        if (updated && "id" in updated) cardItemsUpsert(cid, updated);
+        else cardItemsRemove(cid, it.id);
+        close();
+        refreshCardInPlace(cid);
+      } else {
+        close();
+        refreshCollection();
+      }
     } catch (e) {
       toast((e as Error).message, "danger");
     }
@@ -1174,6 +1299,16 @@ function renderPrefs() {
     nouvelles séries sortent.</p>
     <div id="catalogue"></div>
 
+    <h2 style="margin-top:2rem">Ajouter une carte manquante</h2>
+    <p class="muted">Certaines promos (arts alternatifs, Tin Pack Set…) ne figurent pas dans la base
+    officielle One Piece et n'apparaissent donc pas. Colle l'URL TCGplayer du produit pour l'ajouter
+    au catalogue (immédiat, sans resynchronisation).</p>
+    <div class="toolbar">
+      <wa-input id="curated-url" placeholder="https://www.tcgplayer.com/product/…" style="flex:1"></wa-input>
+      <wa-button id="curated-add" variant="brand">Ajouter</wa-button>
+    </div>
+    <div id="curated-list" class="owner-list"></div>
+
     <h2 style="margin-top:2rem">Co-propriétaires de la collection</h2>
     <p class="muted">Les noms ajoutés ici sont proposés dans le menu déroulant « Propriétaire » de chaque carte.
     Supprimer un propriétaire ne supprime pas ses cartes : elles repassent simplement en « Non attribué ».</p>
@@ -1230,8 +1365,76 @@ function renderPrefs() {
       }
     }),
   );
+  const addCurated = async () => {
+    const input = host.querySelector("#curated-url") as any;
+    const url = (input?.value || "").trim();
+    if (!url) return;
+    const btn = host.querySelector("#curated-add") as any;
+    if (btn) btn.loading = true;
+    try {
+      const c = await api.addCurated(url);
+      input.value = "";
+      toast(`Ajoutée : ${c.code} — ${c.name}`);
+      await renderCuratedList();
+      // The catalogue changed — refresh the collection view.
+      if (colSet) renderSetDetail(colSet);
+      else renderSetsOverview();
+    } catch (e) {
+      toast((e as Error).message, "danger");
+    } finally {
+      if (btn) btn.loading = false;
+    }
+  };
+  host.querySelector("#curated-add")?.addEventListener("click", addCurated);
+  host.querySelector("#curated-url")?.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Enter") addCurated();
+  });
+
   renderOwnerList();
+  renderCuratedList();
   renderCatalogue();
+}
+
+async function renderCuratedList() {
+  const list = document.querySelector<HTMLDivElement>("#curated-list");
+  if (!list) return;
+  let cards: CuratedCard[];
+  try {
+    cards = await api.listCurated();
+  } catch (e) {
+    list.innerHTML = `<wa-callout variant="danger">${esc((e as Error).message)}</wa-callout>`;
+    return;
+  }
+  if (!cards.length) {
+    list.innerHTML = `<wa-callout>Aucune carte ajoutée manuellement.</wa-callout>`;
+    return;
+  }
+  list.innerHTML = cards
+    .map(
+      (c) => `
+      <div class="owner-row curated-row" data-id="${esc(c.cardId)}">
+        <span class="curated-info">
+          <img class="curated-thumb" src="${esc(proxied(c.image, 80))}" alt="" loading="lazy" />
+          <span>${esc(c.code)} · ${esc(c.name)} <span class="muted small">${esc(c.cardId)}</span></span>
+        </span>
+        <wa-button class="curated-del" size="small" appearance="outlined" variant="danger">Supprimer</wa-button>
+      </div>`,
+    )
+    .join("");
+  cards.forEach((c) =>
+    list
+      .querySelector(`.curated-row[data-id="${cssId(c.cardId)}"] .curated-del`)
+      ?.addEventListener("click", async () => {
+        try {
+          await api.deleteCurated(c.cardId);
+          await renderCuratedList();
+          if (colSet) renderSetDetail(colSet);
+          else renderSetsOverview();
+        } catch (e) {
+          toast((e as Error).message, "danger");
+        }
+      }),
+  );
 }
 
 // ---------- catalogue sync ----------

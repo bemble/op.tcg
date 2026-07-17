@@ -28,9 +28,15 @@ func (s *server) runSync(ctx context.Context) (syncResult, error) {
 
 	// DON!! cards are supplementary: if their source is unreachable, keep the
 	// ones already in the catalogue rather than dropping them.
-	if don, derr := fetchDonCards(ctx); derr == nil {
+	if don, remap, derr := fetchDonCards(ctx); derr == nil {
 		cards = append(cards, don...)
 		log.Printf("DON!! cards: %d from tcgplayer.com", len(don))
+		// Migrate owned copies whose id changed (PRB gold _p1 -> _p2).
+		if n, merr := s.st.RemapCardIDs(remap); merr != nil {
+			log.Printf("DON!! card-id remap failed: %v", merr)
+		} else if n > 0 {
+			log.Printf("DON!! card-id remap: %d owned copies updated", n)
+		}
 	} else if existing := s.cat.DonCards(); len(existing) > 0 {
 		cards = append(cards, existing...)
 		log.Printf("DON!! fetch failed (%v); kept %d existing", derr, len(existing))
