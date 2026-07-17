@@ -151,14 +151,14 @@ function langOptions(selected: string): string {
   ).join("");
 }
 
-// Flags of the languages a card is owned in, scoped to the active owner filter
-// (0 = everyone). Ordered EN, FR, JP. Empty string when not owned. Only physical
-// (owned) copies carry a language.
-function ownedFlags(c: SetCard): string {
+// Flags of the languages a card is tracked in for a given status, scoped to the
+// active owner filter (0 = everyone). Ordered EN, FR, JP. Only owned/ordered
+// copies carry a language.
+function langFlags(c: SetCard, status: CardStatus): string {
   const owner = activeOwner();
   const langs = new Set(
     (c.items || [])
-      .filter((it) => (it.status || "owned") === "owned" && (!owner || it.ownerId === owner))
+      .filter((it) => (it.status || "owned") === status && (!owner || it.ownerId === owner))
       .map((it) => it.language),
   );
   const flags = LANGUAGES.filter((l) => langs.has(l)).map((l) => LANG_FLAGS[l] ?? l);
@@ -167,12 +167,18 @@ function ownedFlags(c: SetCard): string {
   });
   return flags.join(" ");
 }
+function ownedFlags(c: SetCard): string {
+  return langFlags(c, "owned");
+}
 
 // Grid overlay badge for a card's status: owned -> flags + quantity; ordered ->
-// cart; wishlist -> heart. Empty when untracked.
+// cart + flags; wishlist -> heart. Empty when untracked.
 function statusBadge(c: SetCard): string {
   if (c.owned) return `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>`;
-  if (c.ordered) return `<span class="status-badge ordered" title="Commandée">🛒</span>`;
+  if (c.ordered) {
+    const f = langFlags(c, "ordered");
+    return `<span class="status-badge ordered" title="Commandée">🛒${f ? " " + f : ""}</span>`;
+  }
   if (c.wishlist) return `<span class="status-badge wishlist" title="Wishlist">❤</span>`;
   return "";
 }
@@ -180,7 +186,10 @@ function statusBadge(c: SetCard): string {
 // List-view status marker shown in the row's meta column.
 function statusMetaList(c: SetCard): string {
   if (c.owned) return `<span class="own-flags-inline">${ownedFlags(c)}</span>`;
-  if (c.ordered) return `<span class="status-tag ordered">🛒 Commandée</span>`;
+  if (c.ordered) {
+    const f = langFlags(c, "ordered");
+    return `<span class="status-tag ordered">🛒 Commandée${f ? " " + f : ""}</span>`;
+  }
   if (c.wishlist) return `<span class="status-tag wishlist">❤ Wishlist</span>`;
   return "";
 }
@@ -247,7 +256,9 @@ function possessionLine(it: Item): string {
     return `${owner} · ${langLabel(it.language)} · ×${it.quantity}${notes}`;
   }
   const s = STATUSES.find((x) => x.value === status);
-  return `${owner} · ${s ? `${s.emoji} ${esc(s.label)}` : esc(status)}${notes}`;
+  const badge = s ? `${s.emoji} ${esc(s.label)}` : esc(status);
+  const lang = status === "ordered" && it.language ? ` · ${langLabel(it.language)}` : "";
+  return `${owner} · ${badge}${lang}${notes}`;
 }
 
 function toast(message: string, variant: "success" | "danger" = "success") {
@@ -401,12 +412,14 @@ function trackRow(it: Item): string {
   const code = c && !isDon(c) ? esc(c.code) + " " : "";
   const name = c ? esc(c.name) : esc(it.cardId);
   const note = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
+  // Ordered copies carry a language; wishlist don't.
+  const lang = it.status === "ordered" && it.language ? `${langLabel(it.language)} · ` : "";
   return `
   <div class="list-row track-row" data-id="${it.id}">
     ${thumb}
     <div class="list-main">
       <span class="list-name" title="${name}">${name}</span>
-      <span class="list-meta">${code}${owner}${note}</span>
+      <span class="list-meta">${code}${lang}${owner}${note}</span>
     </div>
     <div class="list-actions">
       <wa-button class="track-edit" size="small" appearance="outlined">Éditer</wa-button>
@@ -1360,7 +1373,7 @@ function openCardDialog(c: SetCard) {
             <span class="field-label">Statut</span>
             ${segmentedControl("status", STATUS_SEG, "owned")}
           </div>
-          <div class="field f-owned-only">
+          <div class="field f-lang-only">
             <span class="field-label">Langue</span>
             ${segmentedControl("lang", LANG_SEG, "EN")}
           </div>
@@ -1389,14 +1402,18 @@ function openCardDialog(c: SetCard) {
     setTimeout(() => dlg.remove(), 300);
   };
   // Language/quantity only apply to physically-owned copies.
-  const toggleOwnedFields = () => {
-    const owned = segValue(dlg, "status", "owned") === "owned";
+  const toggleFields = () => {
+    const status = segValue(dlg, "status", "owned");
+    // Language: owned + ordered (you know what you bought); quantity: owned only.
+    dlg.querySelectorAll<HTMLElement>(".f-lang-only").forEach((el) => {
+      el.style.display = status === "wishlist" ? "none" : "";
+    });
     dlg.querySelectorAll<HTMLElement>(".f-owned-only").forEach((el) => {
-      el.style.display = owned ? "" : "none";
+      el.style.display = status === "owned" ? "" : "none";
     });
   };
-  wireSegments(dlg, toggleOwnedFields);
-  toggleOwnedFields();
+  wireSegments(dlg, toggleFields);
+  toggleFields();
 
   dlg.querySelector(".f-cancel")?.addEventListener("click", close);
   dlg.querySelector(".f-add")?.addEventListener("click", async () => {
@@ -1447,7 +1464,7 @@ function openEditDialog(it: Item, opts?: { onSaved?: () => void }) {
           <span class="field-label">Statut</span>
           ${segmentedControl("status", STATUS_SEG, it.status || "owned")}
         </div>
-        <div class="field f-owned-only">
+        <div class="field f-lang-only">
           <span class="field-label">Langue</span>
           ${segmentedControl("lang", LANG_SEG, it.language || "EN")}
         </div>
@@ -1473,14 +1490,18 @@ function openEditDialog(it: Item, opts?: { onSaved?: () => void }) {
     (dlg as any).open = false;
     setTimeout(() => dlg.remove(), 300);
   };
-  const toggleOwnedFields = () => {
-    const owned = segValue(dlg, "status", "owned") === "owned";
+  const toggleFields = () => {
+    const status = segValue(dlg, "status", "owned");
+    // Language: owned + ordered (you know what you bought); quantity: owned only.
+    dlg.querySelectorAll<HTMLElement>(".f-lang-only").forEach((el) => {
+      el.style.display = status === "wishlist" ? "none" : "";
+    });
     dlg.querySelectorAll<HTMLElement>(".f-owned-only").forEach((el) => {
-      el.style.display = owned ? "" : "none";
+      el.style.display = status === "owned" ? "" : "none";
     });
   };
-  wireSegments(dlg, toggleOwnedFields);
-  toggleOwnedFields();
+  wireSegments(dlg, toggleFields);
+  toggleFields();
 
   dlg.querySelector(".f-cancel")?.addEventListener("click", close);
   dlg.querySelector(".f-save")?.addEventListener("click", async () => {

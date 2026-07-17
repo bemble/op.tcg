@@ -213,13 +213,19 @@ func (s *Store) AddItems(entries []BatchEntry) ([]Item, error) {
 // the affected row id.
 func upsertItemTx(tx *sql.Tx, cardID string, it Item) (int64, error) {
 	status := normStatus(it.Status)
-	// Ordered/wishlist track a wanted card per owner only — language and quantity
-	// are irrelevant, so they're normalised out (keeps entries unique per owner).
-	if status != statusOwned {
+	// Wishlist tracks a wanted card per owner only (no language/quantity). Ordered
+	// keeps its language (you know what you bought) but not a quantity. Owned uses
+	// both.
+	switch status {
+	case statusWishlist:
 		it.Language = ""
 		it.Quantity = 1
-	} else if it.Quantity <= 0 {
+	case statusOrdered:
 		it.Quantity = 1
+	default: // owned
+		if it.Quantity <= 0 {
+			it.Quantity = 1
+		}
 	}
 
 	var id int64
@@ -313,9 +319,12 @@ func (s *Store) UpdateItem(id int64, in Item) (*Item, error) {
 		}
 		return nil, nil
 	}
-	if status != statusOwned {
+	switch status {
+	case statusWishlist:
 		in.Language = ""
 		in.Quantity = 1
+	case statusOrdered:
+		in.Quantity = 1 // keep language
 	}
 	_, err := s.db.Exec(`UPDATE collection_items
 		SET owner_id=?, quantity=?, language=?, notes=?, status=?, updated_at=datetime('now')
