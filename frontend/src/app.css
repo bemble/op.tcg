@@ -801,6 +801,47 @@ wa-tab-panel::part(base) {
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
 }
+/* Ordered / wishlist corner badge (grid tiles). */
+.status-badge {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  color: #fff;
+}
+.status-badge.ordered {
+  background: rgba(217, 119, 6, 0.92);
+}
+.status-badge.wishlist {
+  background: rgba(219, 39, 119, 0.92);
+}
+/* Ordered/wishlist are tracked (not missing): keep the art readable. */
+.set-tile.ordered .card-img,
+.set-tile.wishlist .card-img {
+  filter: none;
+  opacity: 0.9;
+}
+/* Status marker + row accent in list view. */
+.status-tag {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.status-tag.ordered {
+  color: #d97706;
+}
+.status-tag.wishlist {
+  color: #db2777;
+}
+.list-row.ordered {
+  border-left: 3px solid #d97706;
+}
+.list-row.wishlist {
+  border-left: 3px solid #db2777;
+}
 .alt-art {
   position: absolute;
   top: 0.25rem;
@@ -893,6 +934,76 @@ wa-tab-panel::part(base) {
 }
 
 /* ---- card dialog ---- */
+/* A touch wider on desktop; capped to the viewport on mobile by wa-dialog. */
+.card-dialog {
+  --width: 36rem;
+}
+/* Compact form: fields laid out on shared rows. */
+.field-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.field-grow {
+  flex: 1;
+  min-width: 9rem;
+}
+.field-grow wa-select {
+  width: 100%;
+}
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+/* Segmented icon+label control (status / language). */
+.seg {
+  display: inline-flex;
+  gap: 1px;
+  background: var(--wa-color-surface-border, #d4d4d8);
+  border: 1px solid var(--wa-color-surface-border, #d4d4d8);
+  border-radius: var(--wa-border-radius-m, 6px);
+  overflow: hidden;
+}
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border: 0;
+  background: var(--wa-color-surface-raised, #fff);
+  color: var(--wa-color-text-normal, #1a1a1a);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg-btn:hover {
+  background: var(--wa-color-surface-hover, #f4f4f5);
+}
+.seg-btn.active {
+  background: var(--wa-color-brand-fill-loud, #2563eb);
+  color: #fff;
+}
+.seg-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+/* Mobile: keep only the status icons and language flags. */
+@media (max-width: 560px) {
+  .seg-label {
+    display: none;
+  }
+  .seg-btn {
+    padding: 0.35rem 0.55rem;
+  }
+}
 .card-dialog-img {
   display: block;
   max-width: 320px;
@@ -917,6 +1028,12 @@ wa-tab-panel::part(base) {
 }
 .add-details::part(content) {
   padding: 0.25rem 0 0;
+}
+.add-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 .card-dialog-img.placeholder {
   display: flex;

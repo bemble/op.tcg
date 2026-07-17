@@ -12,16 +12,35 @@ func (s *server) ownedByCard() map[string][]Item {
 	return byCard
 }
 
-// ownedCountsForGoal counts, per set prefix, the distinct owned cards that
-// count toward the goal.
+// hasStatus reports whether any of the items has the given status.
+func hasStatus(items []Item, status string) bool {
+	for _, it := range items {
+		if normStatus(it.Status) == status {
+			return true
+		}
+	}
+	return false
+}
+
+// isAcquired reports whether a card counts as acquired for completion: it's
+// physically owned or on order. Wishlist entries don't count.
+func isAcquired(items []Item) bool {
+	return hasStatus(items, statusOwned) || hasStatus(items, statusOrdered)
+}
+
+// ownedCountsForGoal counts, per set prefix, the distinct acquired (owned or
+// ordered) cards that count toward the goal.
 func (s *server) ownedCountsForGoal(byCard map[string][]Item, goal string) map[string]int {
 	counts := map[string]int{}
-	for cardID := range byCard {
+	for cardID, items := range byCard {
 		c, ok := s.cat.Get(cardID)
 		if !ok {
 			continue
 		}
 		if !inGoal(parallelLevel(cardID, c.Code), goal) {
+			continue
+		}
+		if !isAcquired(items) {
 			continue
 		}
 		counts[setPrefix(c.Code, c.Rarity, c.Name)]++
@@ -51,12 +70,16 @@ func (s *server) handleSets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// setCard is one card in a set, annotated with ownership and whether it counts
-// toward the active collection goal.
+// setCard is one card in a set, annotated with ownership/status and whether it
+// counts toward the active collection goal. Owned/Ordered/Wishlist are the
+// aggregate (all owners) states; the frontend rescopes them per owner from
+// Items when an owner filter is active.
 type setCard struct {
 	Card
-	Owned    bool   `json:"owned"`
-	Quantity int    `json:"quantity"`
+	Owned    bool   `json:"owned"`    // has a physical copy
+	Ordered  bool   `json:"ordered"`  // has an on-order copy
+	Wishlist bool   `json:"wishlist"` // wanted by someone
+	Quantity int    `json:"quantity"` // physical (owned) quantity
 	InGoal   bool   `json:"inGoal"`
 	Items    []Item `json:"items"`
 }
@@ -81,17 +104,24 @@ func (s *server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 		items := byCard[c.CardID]
 		qty := 0
 		for _, it := range items {
-			qty += it.Quantity
+			if normStatus(it.Status) == statusOwned {
+				qty += it.Quantity
+			}
 		}
-		owned := len(items) > 0
+		owned := hasStatus(items, statusOwned)
+		ordered := hasStatus(items, statusOrdered)
+		wishlist := hasStatus(items, statusWishlist)
 		counts := inGoal(parallelLevel(c.CardID, c.Code), goal)
 		if counts {
 			total++
-			if owned {
+			if owned || ordered { // "acquired" — ordered counts, wishlist doesn't
 				ownedCount++
 			}
 		}
-		out = append(out, setCard{Card: c, Owned: owned, Quantity: qty, Items: items, InGoal: counts})
+		out = append(out, setCard{
+			Card: c, Owned: owned, Ordered: ordered, Wishlist: wishlist,
+			Quantity: qty, Items: items, InGoal: counts,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"code":  prefix,

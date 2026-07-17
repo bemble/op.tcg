@@ -214,6 +214,7 @@ type addItemRequest struct {
 	Quantity int    `json:"quantity"`
 	Language string `json:"language"`
 	Notes    string `json:"notes"`
+	Status   string `json:"status"` // owned (default) | ordered | wishlist
 }
 
 func (s *server) handleAddItem(w http.ResponseWriter, r *http.Request) {
@@ -231,11 +232,17 @@ func (s *server) handleAddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	status := normStatus(req.Status)
+	if !validStatus(status) {
+		writeErr(w, http.StatusBadRequest, "statut invalide")
+		return
+	}
 	it := Item{
 		OwnerID:  req.OwnerID,
 		Quantity: req.Quantity,
 		Language: orDefault(req.Language, "EN"),
 		Notes:    req.Notes,
+		Status:   status,
 	}
 	out, err := s.st.AddItem(req.CardID, it)
 	if err != nil {
@@ -275,6 +282,11 @@ func (s *server) handleBatchAddItems(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "carte absente du catalogue : "+in.CardID)
 			return
 		}
+		status := normStatus(in.Status)
+		if !validStatus(status) {
+			writeErr(w, http.StatusBadRequest, "statut invalide")
+			return
+		}
 		entries = append(entries, BatchEntry{
 			CardID: in.CardID,
 			Item: Item{
@@ -282,6 +294,7 @@ func (s *server) handleBatchAddItems(w http.ResponseWriter, r *http.Request) {
 				Quantity: in.Quantity,
 				Language: orDefault(in.Language, "EN"),
 				Notes:    in.Notes,
+				Status:   status,
 			},
 		})
 	}
@@ -352,6 +365,16 @@ func (s *server) handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok := raw["notes"]; ok {
 		_ = json.Unmarshal(v, &merged.Notes)
+	}
+	if v, ok := raw["status"]; ok {
+		var st string
+		_ = json.Unmarshal(v, &st)
+		st = normStatus(st)
+		if !validStatus(st) {
+			writeErr(w, http.StatusBadRequest, "statut invalide")
+			return
+		}
+		merged.Status = st
 	}
 	if v, ok := raw["ownerId"]; ok {
 		// null or 0 clears the owner; otherwise set it.

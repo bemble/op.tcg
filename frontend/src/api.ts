@@ -1,4 +1,5 @@
 import type {
+  CardStatus,
   FullStats,
   Item,
   Owner,
@@ -67,6 +68,7 @@ export const api = {
     quantity?: number;
     language?: string;
     notes?: string;
+    status?: CardStatus;
   }) =>
     req<Item>("/api/collection", {
       method: "POST",
@@ -97,7 +99,7 @@ export const api = {
 
   updateItem: (
     id: number,
-    patch: Partial<Pick<Item, "ownerId" | "quantity" | "language" | "notes">>,
+    patch: Partial<Pick<Item, "ownerId" | "quantity" | "language" | "notes" | "status">>,
   ) =>
     req<Item | { deleted: boolean }>(`/api/collection/${id}`, {
       method: "PATCH",

@@ -33,6 +33,7 @@ type Item struct {
 	Quantity  int    `json:"quantity"`
 	Language  string `json:"language"`
 	Notes     string `json:"notes"`
+	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 	Card      *Card  `json:"card,omitempty"`
@@ -53,7 +54,29 @@ func openStore(path string) (*Store, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	// Migration: add the status column to pre-existing databases (no-op / errors
+	// harmlessly when it already exists).
+	_, _ = db.Exec(`ALTER TABLE collection_items ADD COLUMN status TEXT NOT NULL DEFAULT 'owned'`)
 	return &Store{db: db}, nil
+}
+
+// Possession statuses. "owned" is a physical copy; "ordered" is bought but not
+// yet in hand (counts toward completion); "wishlist" is wanted (doesn't count).
+const (
+	statusOwned    = "owned"
+	statusOrdered  = "ordered"
+	statusWishlist = "wishlist"
+)
+
+func validStatus(s string) bool {
+	return s == statusOwned || s == statusOrdered || s == statusWishlist
+}
+
+func normStatus(s string) string {
+	if s == "" {
+		return statusOwned
+	}
+	return s
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -189,25 +212,40 @@ func (s *Store) AddItems(entries []BatchEntry) ([]Item, error) {
 // NULL-aware owner) or inserts a new row, within the given transaction. Returns
 // the affected row id.
 func upsertItemTx(tx *sql.Tx, cardID string, it Item) (int64, error) {
-	if it.Quantity <= 0 {
+	status := normStatus(it.Status)
+	// Ordered/wishlist track a wanted card per owner only — language and quantity
+	// are irrelevant, so they're normalised out (keeps entries unique per owner).
+	if status != statusOwned {
+		it.Language = ""
+		it.Quantity = 1
+	} else if it.Quantity <= 0 {
 		it.Quantity = 1
 	}
 
 	var id int64
 	row := tx.QueryRow(`SELECT id FROM collection_items
-		WHERE card_id=? AND language=? AND owner_id IS ?`,
-		cardID, it.Language, it.OwnerID)
+		WHERE card_id=? AND language=? AND owner_id IS ? AND status=?`,
+		cardID, it.Language, it.OwnerID, status)
 	switch err := row.Scan(&id); err {
 	case nil:
-		if _, err := tx.Exec(`UPDATE collection_items
-			SET quantity=quantity+?, notes=CASE WHEN ?!='' THEN ? ELSE notes END, updated_at=datetime('now')
-			WHERE id=?`, it.Quantity, it.Notes, it.Notes, id); err != nil {
-			return 0, err
+		if status == statusOwned {
+			if _, err := tx.Exec(`UPDATE collection_items
+				SET quantity=quantity+?, notes=CASE WHEN ?!='' THEN ? ELSE notes END, updated_at=datetime('now')
+				WHERE id=?`, it.Quantity, it.Notes, it.Notes, id); err != nil {
+				return 0, err
+			}
+		} else {
+			// A wanted card is either tracked or not — don't stack quantities.
+			if _, err := tx.Exec(`UPDATE collection_items
+				SET notes=CASE WHEN ?!='' THEN ? ELSE notes END, updated_at=datetime('now')
+				WHERE id=?`, it.Notes, it.Notes, id); err != nil {
+				return 0, err
+			}
 		}
 	case sql.ErrNoRows:
-		res, err := tx.Exec(`INSERT INTO collection_items (card_id, owner_id, quantity, language, notes)
-			VALUES (?, ?, ?, ?, ?)`,
-			cardID, it.OwnerID, it.Quantity, it.Language, it.Notes)
+		res, err := tx.Exec(`INSERT INTO collection_items (card_id, owner_id, quantity, language, notes, status)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			cardID, it.OwnerID, it.Quantity, it.Language, it.Notes, status)
 		if err != nil {
 			return 0, err
 		}
@@ -245,7 +283,7 @@ func (s *Store) ListItems(ownerID int64) ([]Item, error) {
 
 func (s *Store) queryItems(where string, args ...any) ([]Item, error) {
 	rows, err := s.db.Query(`
-		SELECT i.id, i.card_id, i.owner_id, COALESCE(o.name,''), i.quantity, i.language, i.notes, i.created_at, i.updated_at
+		SELECT i.id, i.card_id, i.owner_id, COALESCE(o.name,''), i.quantity, i.language, i.notes, i.status, i.created_at, i.updated_at
 		FROM collection_items i
 		LEFT JOIN owners o ON o.id=i.owner_id `+where, args...)
 	if err != nil {
@@ -257,7 +295,7 @@ func (s *Store) queryItems(where string, args ...any) ([]Item, error) {
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.CardID, &it.OwnerID, &it.OwnerName, &it.Quantity, &it.Language, &it.Notes,
-			&it.CreatedAt, &it.UpdatedAt); err != nil {
+			&it.Status, &it.CreatedAt, &it.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -265,17 +303,23 @@ func (s *Store) queryItems(where string, args ...any) ([]Item, error) {
 	return out, rows.Err()
 }
 
-// UpdateItem patches mutable fields. quantity<=0 deletes the row.
+// UpdateItem patches mutable fields. quantity<=0 deletes the row (owned only —
+// ordered/wishlist keep quantity 1). Ordered/wishlist rows drop language.
 func (s *Store) UpdateItem(id int64, in Item) (*Item, error) {
-	if in.Quantity <= 0 {
+	status := normStatus(in.Status)
+	if status == statusOwned && in.Quantity <= 0 {
 		if _, err := s.db.Exec(`DELETE FROM collection_items WHERE id=?`, id); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
+	if status != statusOwned {
+		in.Language = ""
+		in.Quantity = 1
+	}
 	_, err := s.db.Exec(`UPDATE collection_items
-		SET owner_id=?, quantity=?, language=?, notes=?, updated_at=datetime('now')
-		WHERE id=?`, in.OwnerID, in.Quantity, in.Language, in.Notes, id)
+		SET owner_id=?, quantity=?, language=?, notes=?, status=?, updated_at=datetime('now')
+		WHERE id=?`, in.OwnerID, in.Quantity, in.Language, in.Notes, status, id)
 	if err != nil {
 		return nil, err
 	}
@@ -335,26 +379,29 @@ func (s *Store) BulkSetLanguageItems(itemIDs []int64, language string) (int, err
 
 	changed := 0
 	for _, id := range itemIDs {
-		var cardID, notes, lang string
+		var cardID, notes, lang, status string
 		var owner sql.NullInt64
 		var qty int
-		err := tx.QueryRow(`SELECT card_id, owner_id, quantity, notes, language
-			FROM collection_items WHERE id=?`, id).Scan(&cardID, &owner, &qty, &notes, &lang)
+		err := tx.QueryRow(`SELECT card_id, owner_id, quantity, notes, language, status
+			FROM collection_items WHERE id=?`, id).Scan(&cardID, &owner, &qty, &notes, &lang, &status)
 		if err == sql.ErrNoRows {
 			continue
 		}
 		if err != nil {
 			return changed, err
 		}
+		if normStatus(status) != statusOwned {
+			continue // only physical copies have a language
+		}
 		if lang == language {
 			continue // already the target language
 		}
-		// Is there another copy this would collide with? (Includes existing rows
-		// and copies changed earlier in this loop.)
+		// Is there another owned copy this would collide with? (Includes existing
+		// rows and copies changed earlier in this loop.)
 		var exID, exQty int64
 		var exNotes string
 		scan := tx.QueryRow(`SELECT id, quantity, notes FROM collection_items
-			WHERE card_id=? AND language=? AND owner_id IS ? AND id<>?`,
+			WHERE card_id=? AND language=? AND owner_id IS ? AND status='owned' AND id<>?`,
 			cardID, language, owner, id).Scan(&exID, &exQty, &exNotes)
 		switch scan {
 		case nil:
@@ -438,8 +485,10 @@ func (s *Store) Stats() (Stats, error) {
 	var st Stats
 	st.ByOwner = []OwnerStat{}
 
+	// "Possédées" counts physical copies only (status='owned') — ordered/wishlist
+	// are tracked but not owned.
 	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT card_id), COALESCE(SUM(quantity),0)
-		FROM collection_items`).Scan(&st.UniqueCards, &st.TotalCards); err != nil {
+		FROM collection_items WHERE status='owned'`).Scan(&st.UniqueCards, &st.TotalCards); err != nil {
 		return st, err
 	}
 
@@ -447,6 +496,7 @@ func (s *Store) Stats() (Stats, error) {
 		SELECT i.owner_id, COALESCE(o.name,''), COUNT(DISTINCT i.card_id), COALESCE(SUM(i.quantity),0)
 		FROM collection_items i
 		LEFT JOIN owners o ON o.id=i.owner_id
+		WHERE i.status='owned'
 		GROUP BY i.owner_id
 		ORDER BY o.name COLLATE NOCASE`)
 	if err != nil {

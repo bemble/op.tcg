@@ -104,6 +104,10 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, it := range items {
+		status := normStatus(it.Status)
+		if status == statusWishlist {
+			continue // wishlist never counts in any stat
+		}
 		rarity, code, name := "—", it.CardID, ""
 		if c, ok := s.cat.Get(it.CardID); ok {
 			if c.Rarity != "" {
@@ -121,19 +125,23 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		owned[it.CardID] = true
-		copies += it.Quantity
+		// Inventory breakdowns (owned/copies/by owner/language/rarity) count only
+		// physical copies; ordered cards have no language/quantity to report.
+		if status == statusOwned {
+			owned[it.CardID] = true
+			copies += it.Quantity
 
-		ownerName := it.OwnerName
-		if ownerName == "" {
-			ownerName = "Non attribué"
+			ownerName := it.OwnerName
+			if ownerName == "" {
+				ownerName = "Non attribué"
+			}
+			add(ownerCards, ownerName, it.CardID)
+			ownerCopies[ownerName] += it.Quantity
+			langCopies[it.Language] += it.Quantity
+			add(rarityCards, rarityBucket(it.CardID, code, rarity, name), it.CardID)
 		}
-		add(ownerCards, ownerName, it.CardID)
-		ownerCopies[ownerName] += it.Quantity
-		langCopies[it.Language] += it.Quantity
-		add(rarityCards, rarityBucket(it.CardID, code, rarity, name), it.CardID)
 
-		// Completion accounting is restricted to cards counting toward the goal.
+		// Completion accounting counts acquired cards (owned or ordered) in goal.
 		if inGoal(parallelLevel(it.CardID, code), goal) {
 			goalOwned[it.CardID] = true
 			add(prefixCards, prefix, it.CardID)

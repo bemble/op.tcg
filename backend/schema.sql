@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS collection_items (
     quantity   INTEGER NOT NULL DEFAULT 1,
     language   TEXT NOT NULL DEFAULT 'EN',
     notes      TEXT NOT NULL DEFAULT '',
+    -- 'owned' (physical copy), 'ordered' (bought, not yet in hand) or 'wishlist'.
+    status     TEXT NOT NULL DEFAULT 'owned',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (owner_id) REFERENCES owners (id) ON DELETE SET NULL

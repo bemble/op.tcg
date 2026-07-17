@@ -24,7 +24,9 @@ import {
   COLLECTION_GOALS,
   FAMILIES,
   LANGUAGES,
+  STATUSES,
   type Card,
+  type CardStatus,
   type CollectionGoal,
   type Item,
   type Owner,
@@ -150,18 +152,37 @@ function langOptions(selected: string): string {
 }
 
 // Flags of the languages a card is owned in, scoped to the active owner filter
-// (0 = everyone). Ordered EN, FR, JP. Empty string when not owned.
+// (0 = everyone). Ordered EN, FR, JP. Empty string when not owned. Only physical
+// (owned) copies carry a language.
 function ownedFlags(c: SetCard): string {
   const owner = activeOwner();
   const langs = new Set(
-    (c.items || []).filter((it) => !owner || it.ownerId === owner).map((it) => it.language),
+    (c.items || [])
+      .filter((it) => (it.status || "owned") === "owned" && (!owner || it.ownerId === owner))
+      .map((it) => it.language),
   );
   const flags = LANGUAGES.filter((l) => langs.has(l)).map((l) => LANG_FLAGS[l] ?? l);
-  // Include any exotic language not in the known list, just in case.
   langs.forEach((l) => {
-    if (!LANGUAGES.includes(l)) flags.push(l);
+    if (l && !LANGUAGES.includes(l)) flags.push(l);
   });
   return flags.join(" ");
+}
+
+// Grid overlay badge for a card's status: owned -> flags + quantity; ordered ->
+// cart; wishlist -> heart. Empty when untracked.
+function statusBadge(c: SetCard): string {
+  if (c.owned) return `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>`;
+  if (c.ordered) return `<span class="status-badge ordered" title="Commandée">🛒</span>`;
+  if (c.wishlist) return `<span class="status-badge wishlist" title="Wishlist">❤</span>`;
+  return "";
+}
+
+// List-view status marker shown in the row's meta column.
+function statusMetaList(c: SetCard): string {
+  if (c.owned) return `<span class="own-flags-inline">${ownedFlags(c)}</span>`;
+  if (c.ordered) return `<span class="status-tag ordered">🛒 Commandée</span>`;
+  if (c.wishlist) return `<span class="status-tag wishlist">❤ Wishlist</span>`;
+  return "";
 }
 
 // Owner <wa-option>s, with an "unspecified" entry mapped to value "".
@@ -182,6 +203,51 @@ function ownerOptions(selected: number | null): string {
 function parseOwner(v: string): number | null {
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Compact segmented controls (icon + label) for the add/edit dialogs — saves
+// vertical space vs full selects. On mobile only the icon/flag shows (CSS).
+type SegOption = { value: string; icon: string; label: string };
+const STATUS_SEG: SegOption[] = STATUSES.map((s) => ({ value: s.value, icon: s.emoji, label: s.label }));
+const LANG_SEG: SegOption[] = LANGUAGES.map((l) => ({ value: l, icon: LANG_FLAGS[l] ?? "", label: l }));
+
+function segmentedControl(name: string, opts: SegOption[], selected: string): string {
+  return `<div class="seg" data-seg="${name}">${opts
+    .map(
+      (o) =>
+        `<button type="button" class="seg-btn${o.value === selected ? " active" : ""}" data-value="${esc(o.value)}" title="${esc(o.label)}" aria-label="${esc(o.label)}"><span class="seg-icon">${o.icon}</span><span class="seg-label">${esc(o.label)}</span></button>`,
+    )
+    .join("")}</div>`;
+}
+
+function segValue(root: ParentNode, name: string, def: string): string {
+  const active = root.querySelector(`.seg[data-seg="${name}"] .seg-btn.active`) as HTMLElement | null;
+  return active?.getAttribute("data-value") || def;
+}
+
+function wireSegments(root: ParentNode, onStatusChange?: () => void) {
+  root.querySelectorAll<HTMLElement>(".seg").forEach((seg) => {
+    seg.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        seg.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        if (seg.getAttribute("data-seg") === "status") onStatusChange?.();
+      });
+    });
+  });
+}
+
+// One possession's summary line in the manage dialog. Owned copies show
+// language + quantity; ordered/wishlist show just their status.
+function possessionLine(it: Item): string {
+  const owner = it.ownerName ? esc(it.ownerName) : "Non attribué";
+  const notes = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
+  const status = it.status || "owned";
+  if (status === "owned") {
+    return `${owner} · ${langLabel(it.language)} · ×${it.quantity}${notes}`;
+  }
+  const s = STATUSES.find((x) => x.value === status);
+  return `${owner} · ${s ? `${s.emoji} ${esc(s.label)}` : esc(status)}${notes}`;
 }
 
 function toast(message: string, variant: "success" | "danger" = "success") {
@@ -244,10 +310,12 @@ function renderShell() {
       <wa-tab slot="nav" panel="collection">Ma collection</wa-tab>
       <wa-tab slot="nav" panel="stats">Statistiques</wa-tab>
       <wa-tab slot="nav" panel="search">Rechercher &amp; ajouter</wa-tab>
+      <wa-tab slot="nav" panel="tracking">Suivi</wa-tab>
       <wa-tab slot="nav" panel="prefs">Préférences</wa-tab>
       <wa-tab-panel name="collection"><div id="collection"></div></wa-tab-panel>
       <wa-tab-panel name="stats"><div id="stats-page"></div></wa-tab-panel>
       <wa-tab-panel name="search"><div id="search"></div></wa-tab-panel>
+      <wa-tab-panel name="tracking"><div id="tracking"></div></wa-tab-panel>
       <wa-tab-panel name="prefs"><div id="prefs"></div></wa-tab-panel>
     </wa-tab-group>
   `;
@@ -274,7 +342,7 @@ function renderShell() {
 
 // ---------- routing (History API / clean URLs, so back/forward work) ----------
 
-const TABS = ["collection", "stats", "search", "prefs"];
+const TABS = ["collection", "tracking", "stats", "search", "prefs"];
 
 function currentRoute(): { tab: string; set: string | null } {
   const parts = location.pathname.split("/").filter(Boolean);
@@ -301,6 +369,8 @@ function router() {
     colSet = set;
     if (set) renderSetDetail(set);
     else renderSetsOverview();
+  } else if (tab === "tracking") {
+    renderTracking(); // re-fetch fresh each visit
   } else if (tab === "stats") {
     renderStats(); // re-fetch fresh each visit
   }
@@ -317,6 +387,75 @@ async function refreshStats() {
   } catch {
     host.innerHTML = "";
   }
+}
+
+// ---------- suivi tab (wishlist & commandes) ----------
+
+// One tracked (ordered/wishlist) card as a row with quick edit/delete.
+function trackRow(it: Item): string {
+  const c = it.card;
+  const owner = it.ownerName ? esc(it.ownerName) : "Non attribué";
+  // Zoom enabled (data-full): the row has explicit action buttons, so tapping
+  // the thumbnail opens the lightbox instead of an edit dialog.
+  const thumb = c ? thumbTag(c) : `<div class="list-thumb placeholder"></div>`;
+  const code = c && !isDon(c) ? esc(c.code) + " " : "";
+  const name = c ? esc(c.name) : esc(it.cardId);
+  const note = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
+  return `
+  <div class="list-row track-row" data-id="${it.id}">
+    ${thumb}
+    <div class="list-main">
+      <span class="list-name" title="${name}">${name}</span>
+      <span class="list-meta">${code}${owner}${note}</span>
+    </div>
+    <div class="list-actions">
+      <wa-button class="track-edit" size="small" appearance="outlined">Éditer</wa-button>
+      <wa-button class="track-del" size="small" appearance="outlined" variant="danger">×</wa-button>
+    </div>
+  </div>`;
+}
+
+async function renderTracking() {
+  const host = document.querySelector<HTMLDivElement>("#tracking");
+  if (!host) return;
+  host.innerHTML = `<div class="loading"><wa-spinner></wa-spinner></div>`;
+  let items: Item[];
+  try {
+    items = await api.listCollection();
+  } catch (e) {
+    host.innerHTML = errCallout(e);
+    return;
+  }
+  const ordered = items.filter((it) => it.status === "ordered");
+  const wishlist = items.filter((it) => it.status === "wishlist");
+
+  const section = (title: string, emoji: string, list: Item[]) =>
+    `<section class="stat-section">
+      <h2>${emoji} ${title} <span class="muted">(${list.length})</span></h2>
+      ${
+        list.length
+          ? `<div class="card-list">${list.map(trackRow).join("")}</div>`
+          : `<p class="muted">Aucune carte.</p>`
+      }
+    </section>`;
+
+  host.innerHTML = section("Commandées", "🛒", ordered) + section("Wishlist", "❤", wishlist);
+
+  [...ordered, ...wishlist].forEach((it) => {
+    const el = host.querySelector(`.track-row[data-id="${it.id}"]`);
+    el?.querySelector(".track-edit")?.addEventListener("click", () =>
+      openEditDialog(it, { onSaved: renderTracking }),
+    );
+    el?.querySelector(".track-del")?.addEventListener("click", async () => {
+      try {
+        await api.deleteItem(it.id);
+        await renderTracking();
+        refreshStats();
+      } catch (e) {
+        toast((e as Error).message, "danger");
+      }
+    });
+  });
 }
 
 // ---------- statistiques tab ----------
@@ -439,11 +578,34 @@ let batchAdd = false; // select many cards, then add in one go (per-row in list,
 let batchEdit = false; // list-only: select owned cards, then change their language in one go
 
 // Set-detail display options (persisted in localStorage).
-type OwnFilter = "all" | "owned" | "missing";
+type OwnFilter = "all" | "owned" | "ordered" | "wishlist" | "missing";
+const OWN_FILTERS: { value: OwnFilter; label: string }[] = [
+  { value: "all", label: "Toutes" },
+  { value: "owned", label: "Possédées" },
+  { value: "ordered", label: "Commandées" },
+  { value: "wishlist", label: "Wishlist" },
+  { value: "missing", label: "Manquantes" },
+];
 let ownFilter: OwnFilter = ((): OwnFilter => {
-  const v = localStorage.getItem("ownFilter");
-  return v === "owned" || v === "missing" ? v : "all";
+  const v = localStorage.getItem("ownFilter") as OwnFilter | null;
+  return v && OWN_FILTERS.some((f) => f.value === v) ? v : "all";
 })();
+
+// Whether a card matches the active owned/ordered/wishlist filter.
+function matchesOwnFilter(c: SetCard): boolean {
+  switch (ownFilter) {
+    case "owned":
+      return c.owned;
+    case "ordered":
+      return c.ordered;
+    case "wishlist":
+      return c.wishlist;
+    case "missing":
+      return !c.owned && !c.ordered && !c.wishlist;
+    default:
+      return true;
+  }
+}
 let goalOnly = localStorage.getItem("goalOnly") === "1";
 let parallelsAtEnd = localStorage.getItem("parallelsAtEnd") === "1";
 let showFilters = localStorage.getItem("showFilters") === "1"; // filters hidden by default
@@ -462,13 +624,28 @@ let setOwner = parseInt(localStorage.getItem("setOwner") || "0", 10) || 0;
 // tile in place instead of tearing down and refetching the whole view.
 let activeDetail: SetDetail | null = null;
 
-// effectiveCard recomputes owned/quantity from the point of view of one owner
-// (keeping items intact for the manage dialog). ownerId 0 = aggregate (all).
+// effectiveCard recomputes the status flags/quantity from the point of view of
+// one owner (keeping items intact for the manage dialog). ownerId 0 = aggregate
+// (all owners). Quantity is the physical (owned) count.
 function effectiveCard(c: SetCard, ownerId: number): SetCard {
-  if (!ownerId) return c;
-  const mine = (c.items || []).filter((it) => it.ownerId === ownerId);
-  const quantity = mine.reduce((n, it) => n + it.quantity, 0);
-  return { ...c, owned: mine.length > 0, quantity };
+  const items = ownerId ? (c.items || []).filter((it) => it.ownerId === ownerId) : c.items || [];
+  const owned = items.filter((it) => (it.status || "owned") === "owned");
+  return {
+    ...c,
+    owned: owned.length > 0,
+    ordered: items.some((it) => it.status === "ordered"),
+    wishlist: items.some((it) => it.status === "wishlist"),
+    quantity: owned.reduce((n, it) => n + it.quantity, 0),
+  };
+}
+
+// A card's primary status for display (owned wins over ordered over wishlist).
+// "missing" = untracked. Drives tile colouring and badges.
+function statusClass(c: SetCard): string {
+  if (c.owned) return "owned";
+  if (c.ordered) return "ordered";
+  if (c.wishlist) return "wishlist";
+  return "missing";
 }
 
 function renderCollection() {
@@ -608,9 +785,9 @@ async function renderSetDetail(code: string) {
           : ""
       }
       <wa-select id="own-filter" value="${ownFilter}" size="small" style="min-width:140px">
-        <wa-option value="all"${ownFilter === "all" ? " selected" : ""}>Toutes</wa-option>
-        <wa-option value="owned"${ownFilter === "owned" ? " selected" : ""}>Possédées</wa-option>
-        <wa-option value="missing"${ownFilter === "missing" ? " selected" : ""}>Manquantes</wa-option>
+        ${OWN_FILTERS.map(
+          (f) => `<wa-option value="${f.value}"${ownFilter === f.value ? " selected" : ""}>${f.label}</wa-option>`,
+        ).join("")}
       </wa-select>
       <label class="set-toggle">
         <input type="checkbox" id="goal-only"${goalOnly ? " checked" : ""}/> Objectif seulement
@@ -697,8 +874,7 @@ function paintSetGrid(detail: SetDetail) {
   // Header progress reflects the (owner-scoped) in-goal completion.
   updateSetProgress(detail);
 
-  if (ownFilter === "owned") cards = cards.filter((c) => c.owned);
-  else if (ownFilter === "missing") cards = cards.filter((c) => !c.owned);
+  if (ownFilter !== "all") cards = cards.filter(matchesOwnFilter);
   if (goalOnly) cards = cards.filter((c) => c.inGoal);
   if (parallelsAtEnd) {
     // Stable sort keeps the backend's code order within each group.
@@ -724,7 +900,7 @@ function paintSetGrid(detail: SetDetail) {
       .filter((c) => c.owned)
       .flatMap((c) =>
         (c.items || [])
-          .filter((it) => !owner || it.ownerId === owner)
+          .filter((it) => (it.status || "owned") === "owned" && (!owner || it.ownerId === owner))
           .map((it) => editItemRow(c, it)),
       );
     grid.innerHTML = rows.length
@@ -796,8 +972,11 @@ function updateSetProgress(detail: SetDetail) {
 // owner 0 — without this the tile repaints with its stale (pre-mutation) state.
 function recomputeAggregate(card: SetCard) {
   const items = card.items || [];
-  card.quantity = items.reduce((n, it) => n + it.quantity, 0);
-  card.owned = items.length > 0;
+  const owned = items.filter((it) => (it.status || "owned") === "owned");
+  card.quantity = owned.reduce((n, it) => n + it.quantity, 0);
+  card.owned = owned.length > 0;
+  card.ordered = items.some((it) => it.status === "ordered");
+  card.wishlist = items.some((it) => it.status === "wishlist");
 }
 function cardItemsUpsert(cardId: string, item: Item) {
   const card = activeDetail?.cards.find((c) => c.cardId === cardId);
@@ -830,9 +1009,7 @@ function refreshCardInPlace(cardId: string) {
   }
   const eff = effectiveCard(card, activeOwner());
   const node = grid.querySelector(`[data-id="${cssId(cardId)}"]`);
-  const visible =
-    (ownFilter === "all" || (ownFilter === "owned" ? eff.owned : !eff.owned)) &&
-    (!goalOnly || eff.inGoal);
+  const visible = matchesOwnFilter(eff) && (!goalOnly || eff.inGoal);
   if (!node) {
     paintSetGrid(detail); // was filtered out; safest to repaint the grid
   } else if (!visible) {
@@ -882,12 +1059,12 @@ function setBatchTile(c: SetCard): string {
         onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'card-img placeholder',textContent:'${esc(c.code)}'}))" />`
     : `<div class="card-img placeholder">${esc(c.code)}</div>`;
   return `
-  <label class="tile set-tile batch-tile ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}">
+  <label class="tile set-tile batch-tile ${statusClass(c)}" data-id="${esc(c.cardId)}">
     <input type="checkbox" class="batch-cb"/>
     <div class="set-img-wrap">
       ${img}
       ${alt ? `<span class="alt-art">${esc(alt)}</span>` : ""}
-      ${c.owned ? `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>` : ""}
+      ${statusBadge(c)}
     </div>
     <div class="set-tile-name small" title="${esc(c.name)}">${isDon(c) ? `${cardRarityBadge(c)} ${esc(c.name)}` : `${esc(c.code)} ${cardRarityBadge(c)}`}</div>
   </label>`;
@@ -1118,11 +1295,11 @@ function setCardTile(c: SetCard): string {
   // paintSetGrid). No zoom on the image so the click isn't captured by the
   // lightbox.
   return `
-  <div class="tile set-tile clickable ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}" role="button" tabindex="0">
+  <div class="tile set-tile clickable ${statusClass(c)}" data-id="${esc(c.cardId)}" role="button" tabindex="0">
     <div class="set-img-wrap">
       ${imgTag(c, false)}
       ${alt ? `<span class="alt-art">${esc(alt)}</span>` : ""}
-      ${c.owned ? `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>` : ""}
+      ${statusBadge(c)}
     </div>
     <div class="set-tile-name small" title="${esc(c.name)}">${isDon(c) ? `${cardRarityBadge(c)} ${esc(c.name)}` : `${esc(c.code)} ${cardRarityBadge(c)} · ${esc(c.name)}`}</div>
   </div>`;
@@ -1137,24 +1314,25 @@ function setCardRow(c: SetCard): string {
     ? ` · <span class="list-owners" title="${esc(owners.join(", "))}">${esc(owners.join(", "))}</span>`
     : "";
   return `
-  <div class="list-row clickable ${c.owned ? "owned" : "missing"}" data-id="${esc(c.cardId)}" role="button" tabindex="0">
+  <div class="list-row clickable ${statusClass(c)}" data-id="${esc(c.cardId)}" role="button" tabindex="0">
     ${thumbTag(c, false)}
     <div class="list-main">
       <span class="list-code">${isDon(c) ? "" : esc(c.code) + " "}${cardRarityBadge(c)}${c.owned ? ` · ×${c.quantity}` : ""}</span>
       <span class="list-name" title="${esc(c.name)}">${esc(c.name)}</span>
     </div>
-    <div class="list-meta">${c.owned ? `<span class="own-flags-inline">${ownedFlags(c)}</span>` : ""}${ownersTag}</div>
+    <div class="list-meta">${statusMetaList(c)}${ownersTag}</div>
   </div>`;
 }
 
 function openCardDialog(c: SetCard) {
   const dlg = document.createElement("wa-dialog");
+  dlg.classList.add("card-dialog");
   dlg.setAttribute("label", isDon(c) ? c.name : `${c.code} — ${c.name}`);
   const possessions = (c.items || [])
     .map(
       (it) => `
       <div class="poss-row" data-id="${it.id}">
-        <span>${it.ownerName ? esc(it.ownerName) : "Non attribué"} · ${langLabel(it.language)} · ×${it.quantity}${it.notes ? ` · 💬 ${esc(it.notes)}` : ""}</span>
+        <span>${possessionLine(it)}</span>
         <span class="poss-actions">
           <wa-button class="poss-edit" size="small" appearance="outlined">Éditer</wa-button>
           <wa-button class="poss-del" size="small" appearance="outlined" variant="danger">×</wa-button>
@@ -1175,42 +1353,65 @@ function openCardDialog(c: SetCard) {
   dlg.innerHTML = `
     ${img}
     ${anyOwned ? `<div class="poss-list">${possessions}</div><hr class="poss-sep"/>` : ""}
-    <wa-details class="add-details" summary="${anyOwned ? "Ajouter un exemplaire" : "Ajouter à la collection"}">
+    <wa-details class="add-details" summary="${anyOwned ? "Ajouter un exemplaire" : "Ajouter / suivre cette carte"}">
       <div class="form">
-        <label>Propriétaire
-          <wa-select class="f-owner" value="">${ownerOptions(null)}</wa-select>
-        </label>
-        <label>Langue
-          <wa-select class="f-lang" value="EN">${langOptions("EN")}</wa-select>
-        </label>
-        <label>Quantité
-          <wa-input class="f-qty" type="number" min="1" value="1"></wa-input>
-        </label>
+        <div class="field-row">
+          <div class="field">
+            <span class="field-label">Statut</span>
+            ${segmentedControl("status", STATUS_SEG, "owned")}
+          </div>
+          <div class="field f-owned-only">
+            <span class="field-label">Langue</span>
+            ${segmentedControl("lang", LANG_SEG, "EN")}
+          </div>
+        </div>
+        <div class="field-row">
+          <label class="field field-grow">Propriétaire
+            <wa-select class="f-owner" value="">${ownerOptions(null)}</wa-select>
+          </label>
+          <label class="field f-owned-only">Quantité
+            <wa-input class="f-qty" type="number" min="1" value="1" style="width:5.5rem"></wa-input>
+          </label>
+        </div>
         <label>Commentaire
           <wa-textarea class="f-notes" rows="2"></wa-textarea>
         </label>
+        <div class="add-actions">
+          <wa-button class="f-cancel" appearance="outlined">Fermer</wa-button>
+          <wa-button class="f-add" variant="brand">Ajouter</wa-button>
+        </div>
       </div>
-    </wa-details>
-    <wa-button slot="footer" class="f-cancel" appearance="outlined">Fermer</wa-button>
-    <wa-button slot="footer" class="f-add" variant="brand">Ajouter</wa-button>`;
+    </wa-details>`;
   document.body.appendChild(dlg);
   (dlg as any).open = true;
   const close = () => {
     (dlg as any).open = false;
     setTimeout(() => dlg.remove(), 300);
   };
+  // Language/quantity only apply to physically-owned copies.
+  const toggleOwnedFields = () => {
+    const owned = segValue(dlg, "status", "owned") === "owned";
+    dlg.querySelectorAll<HTMLElement>(".f-owned-only").forEach((el) => {
+      el.style.display = owned ? "" : "none";
+    });
+  };
+  wireSegments(dlg, toggleOwnedFields);
+  toggleOwnedFields();
+
   dlg.querySelector(".f-cancel")?.addEventListener("click", close);
   dlg.querySelector(".f-add")?.addEventListener("click", async () => {
+    const status = segValue(dlg, "status", "owned") as CardStatus;
     const ownerId = parseOwner((dlg.querySelector(".f-owner") as any)?.value || "");
-    const language = (dlg.querySelector(".f-lang") as any)?.value || "EN";
+    const language = segValue(dlg, "lang", "EN");
     const quantity = parseInt((dlg.querySelector(".f-qty") as any)?.value, 10) || 1;
     const notes = (dlg.querySelector(".f-notes") as any)?.value || "";
     try {
-      const item = await api.addItem({ cardId: c.cardId, ownerId, language, quantity, notes });
+      const item = await api.addItem({ cardId: c.cardId, ownerId, language, quantity, notes, status });
       cardItemsUpsert(c.cardId, item);
       close();
       refreshCardInPlace(c.cardId);
-      toast(`Ajouté : ${c.name}`);
+      const label = STATUSES.find((s) => s.value === status)?.label ?? "Ajouté";
+      toast(`${label} : ${c.name}`);
     } catch (e) {
       toast((e as Error).message, "danger");
     }
@@ -1235,20 +1436,30 @@ function openCardDialog(c: SetCard) {
   });
 }
 
-function openEditDialog(it: Item) {
+function openEditDialog(it: Item, opts?: { onSaved?: () => void }) {
   const dlg = document.createElement("wa-dialog");
+  dlg.classList.add("card-dialog");
   dlg.setAttribute("label", `Éditer — ${it.card?.name ?? ""}`);
   dlg.innerHTML = `
     <div class="form">
-      <label>Propriétaire
-        <wa-select class="f-owner" value="${it.ownerId ?? ""}">${ownerOptions(it.ownerId)}</wa-select>
-      </label>
-      <label>Langue
-        <wa-select class="f-lang" value="${esc(it.language)}">${langOptions(it.language)}</wa-select>
-      </label>
-      <label>Quantité
-        <wa-input class="f-qty" type="number" min="1" value="${it.quantity}"></wa-input>
-      </label>
+      <div class="field-row">
+        <div class="field">
+          <span class="field-label">Statut</span>
+          ${segmentedControl("status", STATUS_SEG, it.status || "owned")}
+        </div>
+        <div class="field f-owned-only">
+          <span class="field-label">Langue</span>
+          ${segmentedControl("lang", LANG_SEG, it.language || "EN")}
+        </div>
+      </div>
+      <div class="field-row">
+        <label class="field field-grow">Propriétaire
+          <wa-select class="f-owner" value="${it.ownerId ?? ""}">${ownerOptions(it.ownerId)}</wa-select>
+        </label>
+        <label class="field f-owned-only">Quantité
+          <wa-input class="f-qty" type="number" min="1" value="${it.quantity}" style="width:5.5rem"></wa-input>
+        </label>
+      </div>
       <label>Commentaire
         <wa-textarea class="f-notes" rows="2">${esc(it.notes)}</wa-textarea>
       </label>
@@ -1262,22 +1473,37 @@ function openEditDialog(it: Item) {
     (dlg as any).open = false;
     setTimeout(() => dlg.remove(), 300);
   };
+  const toggleOwnedFields = () => {
+    const owned = segValue(dlg, "status", "owned") === "owned";
+    dlg.querySelectorAll<HTMLElement>(".f-owned-only").forEach((el) => {
+      el.style.display = owned ? "" : "none";
+    });
+  };
+  wireSegments(dlg, toggleOwnedFields);
+  toggleOwnedFields();
+
   dlg.querySelector(".f-cancel")?.addEventListener("click", close);
   dlg.querySelector(".f-save")?.addEventListener("click", async () => {
+    const status = segValue(dlg, "status", "owned") as CardStatus;
     const ownerId = parseOwner((dlg.querySelector(".f-owner") as any)?.value || "");
-    const language = (dlg.querySelector(".f-lang") as any)?.value || it.language;
+    const language = segValue(dlg, "lang", it.language || "EN");
     const quantity = parseInt((dlg.querySelector(".f-qty") as any)?.value, 10) || 1;
     const notes = (dlg.querySelector(".f-notes") as any)?.value ?? "";
     try {
-      const updated = await api.updateItem(it.id, { ownerId, language, quantity, notes });
+      const updated = await api.updateItem(it.id, { ownerId, language, quantity, notes, status });
+      close();
+      // Caller-driven refresh (e.g. the Suivi tab re-fetches its list).
+      if (opts?.onSaved) {
+        opts.onSaved();
+        refreshStats();
+        return;
+      }
       const cid = it.card?.cardId;
       if (cid) {
         if (updated && "id" in updated) cardItemsUpsert(cid, updated);
         else cardItemsRemove(cid, it.id);
-        close();
         refreshCardInPlace(cid);
       } else {
-        close();
         refreshCollection();
       }
     } catch (e) {

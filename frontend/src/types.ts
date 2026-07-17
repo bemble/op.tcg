@@ -23,6 +23,8 @@ export interface Owner {
   createdAt: string;
 }
 
+export type CardStatus = "owned" | "ordered" | "wishlist";
+
 export interface Item {
   id: number;
   cardId: string;
@@ -31,6 +33,7 @@ export interface Item {
   quantity: number;
   language: string;
   notes: string;
+  status: CardStatus;
   createdAt: string;
   updatedAt: string;
   card?: Card;
@@ -68,11 +71,20 @@ export const FAMILIES: { value: string; label: string }[] = [
 ];
 
 export interface SetCard extends Card {
-  owned: boolean;
-  quantity: number;
+  owned: boolean; // has a physical copy
+  ordered: boolean; // has an on-order copy
+  wishlist: boolean; // wanted by someone
+  quantity: number; // physical (owned) quantity
   inGoal: boolean; // counts toward the active collection goal
   items: Item[];
 }
+
+// Card statuses, with their UI label and short emoji marker.
+export const STATUSES: { value: CardStatus; label: string; emoji: string }[] = [
+  { value: "owned", label: "Possédée", emoji: "✓" },
+  { value: "ordered", label: "Commandée", emoji: "🛒" },
+  { value: "wishlist", label: "Wishlist", emoji: "❤" },
+];
 
 // Collection goal: which cards count toward set completion.
 export type CollectionGoal = "complete" | "master" | "wizard";
