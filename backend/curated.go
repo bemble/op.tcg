@@ -133,10 +133,22 @@ func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "TCGplayer: "+err.Error())
 		return
 	}
+	// Most cards have an official number (e.g. "P-074") we group under. Some
+	// promos (sealed-battle, event leaders…) have none on TCGplayer — synthesize
+	// a code in the set the product belongs to (OP-PR -> "P"), keyed by product
+	// id so it's unique, so the card still lands in the right set.
+	code, cardID, name := prod.Number, "", prod.Name
+	if code != "" {
+		cardID = s.resolveCuratedID(code)
+	} else {
+		code = fmt.Sprintf("%s-%d", donSetPrefix(prod.SetCode), prod.ProductID)
+		cardID = code
+		name = prod.FullName // no number to distinguish it — keep the full name
+	}
 	c := curatedCard{
-		cardID:    s.resolveCuratedID(prod.Number),
-		code:      prod.Number,
-		name:      prod.Name,
+		cardID:    cardID,
+		code:      code,
+		name:      name,
 		rarity:    prod.Rarity,
 		productID: prod.ProductID,
 	}
@@ -166,8 +178,10 @@ func (s *server) handleDeleteCurated(w http.ResponseWriter, r *http.Request) {
 // tcgProduct is the subset of a TCGplayer product we use to seed a curated card.
 type tcgProduct struct {
 	ProductID int64
-	Number    string // official card code, e.g. "P-074"
+	Number    string // official card code, e.g. "P-074" (may be empty)
+	SetCode   string // TCGplayer set code, e.g. "OP-PR", "OP16"
 	Name      string // cleaned card name (distribution suffix stripped)
+	FullName  string // raw product name (keeps the distribution suffix)
 	Rarity    string // e.g. "PR"
 }
 
@@ -212,6 +226,7 @@ func fetchTCGProduct(ctx context.Context, productID int64) (*tcgProduct, error) 
 	}
 	var d struct {
 		ProductName      string `json:"productName"`
+		SetCode          string `json:"setCode"`
 		CustomAttributes struct {
 			Number       string `json:"number"`
 			RarityDbName string `json:"rarityDbName"`
@@ -220,10 +235,10 @@ func fetchTCGProduct(ctx context.Context, productID int64) (*tcgProduct, error) 
 	if err := json.Unmarshal(data, &d); err != nil {
 		return nil, fmt.Errorf("decode tcgplayer product: %w", err)
 	}
-	if d.CustomAttributes.Number == "" {
-		return nil, fmt.Errorf("tcgplayer product %d has no card number", productID)
-	}
 	name := strings.TrimSpace(reTrailingParen.ReplaceAllString(d.ProductName, ""))
+	if name == "" {
+		return nil, fmt.Errorf("tcgplayer product %d has no name", productID)
+	}
 	rarity := d.CustomAttributes.RarityDbName
 	if rarity == "" {
 		rarity = "PR"
@@ -231,7 +246,9 @@ func fetchTCGProduct(ctx context.Context, productID int64) (*tcgProduct, error) 
 	return &tcgProduct{
 		ProductID: productID,
 		Number:    strings.ToUpper(strings.TrimSpace(d.CustomAttributes.Number)),
+		SetCode:   d.SetCode,
 		Name:      name,
+		FullName:  strings.TrimSpace(d.ProductName),
 		Rarity:    rarity,
 	}, nil
 }
