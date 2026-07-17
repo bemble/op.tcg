@@ -99,6 +99,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/collection", s.handleListItems)
 	mux.HandleFunc("POST /api/collection", s.handleAddItem)
 	mux.HandleFunc("POST /api/collection/batch", s.handleBatchAddItems)
+	mux.HandleFunc("PATCH /api/collection/bulk", s.handleBulkEditItems)
 	mux.HandleFunc("GET /api/collection/stats", s.handleStats)
 	mux.HandleFunc("PATCH /api/collection/{id}", s.handleUpdateItem)
 	mux.HandleFunc("DELETE /api/collection/{id}", s.handleDeleteItem)
@@ -292,6 +293,33 @@ func (s *server) handleBatchAddItems(w http.ResponseWriter, r *http.Request) {
 	}
 	s.enrich(items)
 	writeJSON(w, http.StatusCreated, items)
+}
+
+// handleBulkEditItems changes the language of the given possessions (by item id)
+// in one shot (list-view "édition groupée"), with per-owner granularity.
+func (s *server) handleBulkEditItems(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ItemIDs  []int64 `json:"itemIds"`
+		Language string  `json:"language"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide")
+		return
+	}
+	if req.Language == "" {
+		writeErr(w, http.StatusBadRequest, "langue manquante")
+		return
+	}
+	if len(req.ItemIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "aucun exemplaire sélectionné")
+		return
+	}
+	n, err := s.st.BulkSetLanguageItems(req.ItemIDs, req.Language)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": n})
 }
 
 func (s *server) handleUpdateItem(w http.ResponseWriter, r *http.Request) {

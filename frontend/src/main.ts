@@ -436,6 +436,7 @@ async function renderStats() {
 // null = sets overview; a code = that set's detail.
 let colSet: string | null = null;
 let batchAdd = false; // select many cards, then add in one go (per-row in list, global owner/lang in grid)
+let batchEdit = false; // list-only: select owned cards, then change their language in one go
 
 // Set-detail display options (persisted in localStorage).
 type OwnFilter = "all" | "owned" | "missing";
@@ -591,6 +592,7 @@ async function renderSetDetail(code: string) {
       </div>
       <div class="set-display-options">
         <button type="button" id="batch-mode" class="icon-toggle batch-toggle${batchAdd ? " active" : ""}" title="Ajout par lot" aria-label="Ajout par lot" aria-pressed="${batchAdd}"><wa-icon library="fa" name="list-check"></wa-icon></button>
+        <button type="button" id="bulk-edit" class="icon-toggle bulk-edit-toggle${batchEdit ? " active" : ""}" title="Édition groupée (langue)" aria-label="Édition groupée" aria-pressed="${batchEdit}"><wa-icon library="fa" name="pen-to-square"></wa-icon></button>
         <button type="button" id="filters-toggle" class="icon-toggle${showFilters ? " active" : ""}" title="Filtres" aria-label="Afficher/masquer les filtres" aria-pressed="${showFilters}"><wa-icon library="fa" name="filter"></wa-icon></button>
         <button type="button" id="par-end" class="icon-toggle${parallelsAtEnd ? " active" : ""}" title="Parallèles à la fin" aria-label="Parallèles à la fin" aria-pressed="${parallelsAtEnd}"><wa-icon library="fa" name="layer-group"></wa-icon></button>
         ${viewToggle()}
@@ -658,7 +660,28 @@ async function renderSetDetail(code: string) {
     },
     () => parallelsAtEnd,
   );
-  toggleBtn("batch-mode", (v) => (batchAdd = v), () => batchAdd);
+  // Batch-add and bulk-edit are mutually exclusive modes; keep both buttons in
+  // sync when either toggles.
+  const syncModeButtons = () => {
+    const bm = host.querySelector("#batch-mode");
+    bm?.classList.toggle("active", batchAdd);
+    bm?.setAttribute("aria-pressed", String(batchAdd));
+    const be = host.querySelector("#bulk-edit");
+    be?.classList.toggle("active", batchEdit);
+    be?.setAttribute("aria-pressed", String(batchEdit));
+  };
+  host.querySelector("#batch-mode")?.addEventListener("click", () => {
+    batchAdd = !batchAdd;
+    if (batchAdd) batchEdit = false;
+    syncModeButtons();
+    paintSetGrid(detail);
+  });
+  host.querySelector("#bulk-edit")?.addEventListener("click", () => {
+    batchEdit = !batchEdit;
+    if (batchEdit) batchAdd = false;
+    syncModeButtons();
+    paintSetGrid(detail);
+  });
   paintSetGrid(detail);
 }
 
@@ -683,17 +706,44 @@ function paintSetGrid(detail: SetDetail) {
   }
   const listView = viewMode === "list";
   const batch = batchAdd;
-  // List rows are always actionable, so the "Mode édition" toggle is irrelevant
-  // there — hidden via the .view-list class on the collection container.
+  const editing = batchEdit && listView; // bulk language edit is list-only
   document.querySelector("#collection")?.classList.toggle("view-list", listView);
 
   // Grid batch uses global owner/language (set in the bar); list batch is
-  // per-row.
+  // per-row. The bulk-edit bar reuses the same container (modes are exclusive).
   paintBatchBar(batch, !listView);
+  paintBulkEditBar(editing);
 
   grid.className = listView ? "card-list" : "grid";
+
+  if (editing) {
+    // One row per possession (owner + language) so a single copy can be
+    // re-languaged. Scoped to the active owner filter when one is set.
+    const owner = activeOwner();
+    const rows = cards
+      .filter((c) => c.owned)
+      .flatMap((c) =>
+        (c.items || [])
+          .filter((it) => !owner || it.ownerId === owner)
+          .map((it) => editItemRow(c, it)),
+      );
+    grid.innerHTML = rows.length
+      ? rows.join("")
+      : `<wa-callout class="span">Aucun exemplaire à éditer ici.</wa-callout>`;
+    wireEditRows();
+    return;
+  }
+
   grid.innerHTML = cards
-    .map(batch ? (listView ? setBatchRow : setBatchTile) : listView ? setCardRow : setCardTile)
+    .map(
+      batch
+        ? listView
+          ? setBatchRow
+          : setBatchTile
+        : listView
+          ? setCardRow
+          : setCardTile,
+    )
     .join("");
 
   if (batch) {
@@ -927,6 +977,85 @@ async function runBatchAdd(global: boolean) {
     return;
   }
   // Re-render the set (checkboxes reset, quantities refreshed); batch mode stays on.
+  refreshCollection();
+}
+
+// ---- bulk edit (list view): change the language of many cards at once ----
+
+// One possession as a selectable row: owner + language + quantity, so a single
+// copy can be re-languaged (e.g. only Milo's OP16-001).
+function editItemRow(c: SetCard, it: Item): string {
+  const owner = it.ownerName ? esc(it.ownerName) : "Non attribué";
+  return `
+  <div class="list-row edit-row owned" data-item="${it.id}">
+    ${thumbTag(c, false)}
+    <div class="list-main">
+      <span class="list-code">${isDon(c) ? "" : esc(c.code) + " "}${cardRarityBadge(c)}</span>
+      <span class="list-name" title="${esc(c.name)}">${esc(c.name)}</span>
+    </div>
+    <div class="list-meta">${langLabel(it.language)} · ×${it.quantity} · ${owner}</div>
+    <label class="batch-check" title="Sélectionner"><input type="checkbox" class="edit-cb" value="${it.id}"/></label>
+  </div>`;
+}
+
+function paintBulkEditBar(active: boolean) {
+  const bar = document.querySelector<HTMLDivElement>("#batch-bar");
+  if (!bar || !active) return;
+  bar.innerHTML = `
+    <div class="batch-bar">
+      <span class="muted small">Nouvelle langue :</span>
+      <wa-select id="edit-lang" value="EN" size="small" style="width:110px">${langOptions("EN")}</wa-select>
+      <wa-button id="edit-apply" variant="brand" size="small" disabled>
+        <wa-icon library="fa" name="pen-to-square" slot="start"></wa-icon><span id="edit-apply-label">Changer la langue (0)</span>
+      </wa-button>
+    </div>`;
+  bar.querySelector("#edit-apply")?.addEventListener("click", () => runBulkEdit());
+}
+
+function wireEditRows() {
+  const grid = document.querySelector<HTMLDivElement>("#set-grid");
+  if (!grid) return;
+  grid
+    .querySelectorAll<HTMLInputElement>(".edit-cb")
+    .forEach((cb) => cb.addEventListener("change", updateEditCount));
+  updateEditCount();
+}
+
+function updateEditCount() {
+  const grid = document.querySelector<HTMLDivElement>("#set-grid");
+  const btn = document.querySelector("#edit-apply") as any;
+  if (!grid || !btn) return;
+  const n = grid.querySelectorAll(".edit-cb:checked").length;
+  btn.disabled = n === 0;
+  const label = document.querySelector("#edit-apply-label");
+  if (label) label.textContent = `Changer la langue (${n})`;
+}
+
+async function runBulkEdit() {
+  const grid = document.querySelector<HTMLDivElement>("#set-grid");
+  if (!grid) return;
+  const checked = [...grid.querySelectorAll<HTMLInputElement>(".edit-cb:checked")];
+  if (checked.length === 0) return;
+  const language = (document.querySelector("#edit-lang") as any)?.value || "EN";
+  const itemIds = checked.map((cb) => Number(cb.value)).filter((n) => n > 0);
+
+  const btn = document.querySelector("#edit-apply") as any;
+  if (btn) {
+    btn.loading = true;
+    btn.disabled = true;
+  }
+  try {
+    const res = await api.bulkSetItemLanguage(itemIds, language);
+    toast(`${res.updated} exemplaire(s) mis en ${language}`);
+  } catch (e) {
+    toast((e as Error).message, "danger");
+    if (btn) {
+      btn.loading = false;
+      btn.disabled = false;
+    }
+    return;
+  }
+  // Item ids changed server-side (merge), so refetch the set; edit mode stays on.
   refreshCollection();
 }
 

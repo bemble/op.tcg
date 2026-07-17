@@ -73,6 +73,13 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // Bulk-edit: set the language of specific possessions (by item id).
+  bulkSetItemLanguage: (itemIds: number[], language: string) =>
+    req<{ updated: number }>("/api/collection/bulk", {
+      method: "PATCH",
+      body: JSON.stringify({ itemIds, language }),
+    }),
+
   // Bulk add: one request, one server-side transaction (all-or-nothing).
   addItemsBatch: (
     items: Array<{

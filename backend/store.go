@@ -319,6 +319,72 @@ func (s *Store) RemapCardIDs(remap map[string]string) (int, error) {
 	return n, nil
 }
 
+// BulkSetLanguageItems changes the language of each given possession (by item id)
+// to `language`, in one transaction. If the change would collide with another
+// copy of the same (card, owner, language), the two are merged (quantities
+// summed, first non-empty note kept). Returns the number of items changed.
+func (s *Store) BulkSetLanguageItems(itemIDs []int64, language string) (int, error) {
+	if len(itemIDs) == 0 || language == "" {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	changed := 0
+	for _, id := range itemIDs {
+		var cardID, notes, lang string
+		var owner sql.NullInt64
+		var qty int
+		err := tx.QueryRow(`SELECT card_id, owner_id, quantity, notes, language
+			FROM collection_items WHERE id=?`, id).Scan(&cardID, &owner, &qty, &notes, &lang)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return changed, err
+		}
+		if lang == language {
+			continue // already the target language
+		}
+		// Is there another copy this would collide with? (Includes existing rows
+		// and copies changed earlier in this loop.)
+		var exID, exQty int64
+		var exNotes string
+		scan := tx.QueryRow(`SELECT id, quantity, notes FROM collection_items
+			WHERE card_id=? AND language=? AND owner_id IS ? AND id<>?`,
+			cardID, language, owner, id).Scan(&exID, &exQty, &exNotes)
+		switch scan {
+		case nil:
+			if exNotes == "" {
+				exNotes = notes
+			}
+			if _, err := tx.Exec(`UPDATE collection_items
+				SET quantity=?, notes=?, updated_at=datetime('now') WHERE id=?`,
+				exQty+int64(qty), exNotes, exID); err != nil {
+				return changed, err
+			}
+			if _, err := tx.Exec(`DELETE FROM collection_items WHERE id=?`, id); err != nil {
+				return changed, err
+			}
+		case sql.ErrNoRows:
+			if _, err := tx.Exec(`UPDATE collection_items
+				SET language=?, updated_at=datetime('now') WHERE id=?`, language, id); err != nil {
+				return changed, err
+			}
+		default:
+			return changed, scan
+		}
+		changed++
+	}
+	if err := tx.Commit(); err != nil {
+		return changed, err
+	}
+	return changed, nil
+}
+
 // ---- curated cards ----
 
 // ListCuratedCards returns the user-added cards, newest first.

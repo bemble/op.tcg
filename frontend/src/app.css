@@ -160,6 +160,11 @@ body {
   font-size: 1rem;
   line-height: 1;
 }
+/* Bulk-edit (change language) only makes sense in list view. */
+#collection:not(.view-list) .bulk-edit-toggle {
+  display: none;
+}
+
 /* ---- batch add ---- */
 .batch-bar {
   position: sticky;
