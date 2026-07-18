@@ -117,6 +117,46 @@ func (s *server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleMissing returns the not-acquired (neither owned nor ordered) cards of
+// every set in the selected families, grouped by set in display order. With
+// ?goalOnly=1 only cards counting toward the collection goal are included.
+func (s *server) handleMissing(w http.ResponseWriter, r *http.Request) {
+	goal := s.collectionGoal()
+	goalOnly := r.URL.Query().Get("goalOnly") == "1"
+	fams := s.familySet()
+	byCard := s.ownedByCard()
+
+	type group struct {
+		Code  string    `json:"code"`
+		Name  string    `json:"name"`
+		Cards []setCard `json:"cards"`
+	}
+	out := []group{}
+	for _, m := range s.cat.SetList() {
+		if !fams[m.Family] {
+			continue
+		}
+		cards, name, ok := s.cat.SetCards(m.Code)
+		if !ok {
+			continue
+		}
+		miss := make([]setCard, 0)
+		for _, c := range s.annotateCards(cards, byCard, goal) {
+			if c.Owned || c.Ordered {
+				continue // acquired
+			}
+			if goalOnly && !c.InGoal {
+				continue
+			}
+			miss = append(miss, c)
+		}
+		if len(miss) > 0 {
+			out = append(out, group{Code: m.Code, Name: name, Cards: miss})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // annotateCards turns catalogue cards into setCards annotated with the user's
 // ownership/status per card. Shared by the set-detail and search views.
 func (s *server) annotateCards(cards []Card, byCard map[string][]Item, goal string) []setCard {

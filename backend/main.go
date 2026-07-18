@@ -95,6 +95,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/stats", s.handleFullStats)
 	mux.HandleFunc("GET /api/sets", s.handleSets)
 	mux.HandleFunc("GET /api/sets/{code}", s.handleSetDetail)
+	mux.HandleFunc("GET /api/missing", s.handleMissing)
 
 	mux.HandleFunc("GET /api/collection", s.handleListItems)
 	mux.HandleFunc("POST /api/collection", s.handleAddItem)

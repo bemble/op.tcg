@@ -123,6 +123,13 @@ export interface SetDetail {
   cards: SetCard[];
 }
 
+// A set's missing (not-acquired) cards, for the "toutes les manquantes" view.
+export interface MissingGroup {
+  code: string;
+  name: string;
+  cards: SetCard[];
+}
+
 export interface StatBucket {
   label: string;
   owned?: number;

@@ -165,6 +165,20 @@ body {
   display: none;
 }
 
+/* ---- toutes les manquantes (grouped by set) ---- */
+.missing-group {
+  margin-bottom: 1.5rem;
+}
+.missing-head {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  position: sticky;
+  top: 0;
+  background: var(--wa-color-surface-default, #fff);
+  padding: 0.25rem 0;
+  z-index: 1;
+}
+
 /* ---- batch add ---- */
 .batch-bar {
   position: sticky;

@@ -29,6 +29,7 @@ import {
   type CardStatus,
   type CollectionGoal,
   type Item,
+  type MissingGroup,
   type Owner,
   type SetCard,
   type SetDetail,
@@ -320,11 +321,13 @@ function renderShell() {
     <wa-tab-group>
       <wa-tab slot="nav" panel="collection">Ma collection</wa-tab>
       <wa-tab slot="nav" panel="stats">Statistiques</wa-tab>
+      <wa-tab slot="nav" panel="missing">Manquantes</wa-tab>
       <wa-tab slot="nav" panel="search">Rechercher &amp; ajouter</wa-tab>
       <wa-tab slot="nav" panel="tracking">Suivi</wa-tab>
       <wa-tab slot="nav" panel="prefs">Préférences</wa-tab>
       <wa-tab-panel name="collection"><div id="collection"></div></wa-tab-panel>
       <wa-tab-panel name="stats"><div id="stats-page"></div></wa-tab-panel>
+      <wa-tab-panel name="missing"><div id="missing-page"></div></wa-tab-panel>
       <wa-tab-panel name="search"><div id="search"></div></wa-tab-panel>
       <wa-tab-panel name="tracking"><div id="tracking"></div></wa-tab-panel>
       <wa-tab-panel name="prefs"><div id="prefs"></div></wa-tab-panel>
@@ -353,7 +356,7 @@ function renderShell() {
 
 // ---------- routing (History API / clean URLs, so back/forward work) ----------
 
-const TABS = ["collection", "tracking", "stats", "search", "prefs"];
+const TABS = ["collection", "tracking", "stats", "missing", "search", "prefs"];
 
 function currentRoute(): { tab: string; set: string | null } {
   const parts = location.pathname.split("/").filter(Boolean);
@@ -380,6 +383,8 @@ function router() {
     colSet = set;
     if (set) renderSetDetail(set);
     else renderSetsOverview();
+  } else if (tab === "missing") {
+    renderMissing(); // re-fetch fresh each visit
   } else if (tab === "tracking") {
     renderTracking(); // re-fetch fresh each visit
   } else if (tab === "stats") {
@@ -639,10 +644,12 @@ let setOwner = parseInt(localStorage.getItem("setOwner") || "0", 10) || 0;
 // can patch a single tile in place instead of refetching the whole view.
 interface ActiveList {
   cards: SetCard[]; // the backing model (its items get mutated in place)
-  gridSel: string; // container selector holding the tiles/rows
-  scoped: boolean; // set detail (owner/status filters + progress) vs search (plain)
+  gridSel: string; // container selector holding the tiles/rows (patch mode)
+  ownerScoped: boolean; // apply the owner filter (set detail only)
+  patch: boolean; // true: patch one tile in place; false: always re-render
+  visible?: (c: SetCard) => boolean; // patch mode: should the tile stay shown?
   onProgress?: () => void; // refresh the set header counter (set detail only)
-  onRepaint?: () => void; // full repaint of this view (fallback)
+  rerender: () => void; // full re-render of this view
 }
 let activeList: ActiveList | null = null;
 
@@ -783,9 +790,11 @@ async function renderSetDetail(code: string) {
   activeList = {
     cards: detail.cards,
     gridSel: "#set-grid",
-    scoped: true,
+    ownerScoped: true,
+    patch: true,
+    visible: (c) => matchesOwnFilter(c) && (!goalOnly || c.inGoal),
     onProgress: () => updateSetProgress(detail),
-    onRepaint: () => paintSetGrid(detail),
+    rerender: () => paintSetGrid(detail),
   };
   const pct = detail.total ? Math.round((detail.owned / detail.total) * 100) : 0;
   host.innerHTML = `
@@ -975,6 +984,82 @@ function wireCardActivate(el: Element, c: SetCard) {
   });
 }
 
+// ---- "toutes les manquantes": all not-acquired cards grouped by set ----
+
+let missingGoalOnly = localStorage.getItem("missingGoalOnly") !== "0"; // default on
+let missingGroups: MissingGroup[] = [];
+
+async function renderMissing() {
+  const host = document.querySelector<HTMLDivElement>("#missing-page")!;
+  host.innerHTML = `<div class="loading"><wa-spinner></wa-spinner></div>`;
+  try {
+    missingGroups = await api.missing(missingGoalOnly);
+  } catch (e) {
+    host.innerHTML = errCallout(e);
+    return;
+  }
+  host.innerHTML = `
+    <div class="set-detail-head">
+      <div class="set-detail-title"><strong>Cartes manquantes</strong></div>
+      <div class="set-display-options">${viewToggle()}</div>
+    </div>
+    <div class="set-filters">
+      <label class="set-toggle">
+        <input type="checkbox" id="miss-goal-only"${missingGoalOnly ? " checked" : ""}/> Objectif seulement
+      </label>
+    </div>
+    <div id="missing"></div>`;
+  host.querySelector("#miss-goal-only")?.addEventListener("change", (e) => {
+    missingGoalOnly = (e.target as HTMLInputElement).checked;
+    localStorage.setItem("missingGoalOnly", missingGoalOnly ? "1" : "0");
+    renderMissing(); // re-fetch with the new scope
+  });
+  wireViewToggle(host, () => paintMissing());
+  paintMissing();
+}
+
+function paintMissing() {
+  const container = document.querySelector<HTMLDivElement>("#missing");
+  if (!container) return;
+  const listView = viewMode === "list";
+  document.querySelector("#missing-page")?.classList.toggle("view-list", listView);
+
+  // Re-filter to still-missing (a card acquired via an edit drops out); goalOnly
+  // is already applied server-side.
+  const groups = missingGroups
+    .map((g) => ({ ...g, cards: g.cards.filter((c) => !c.owned && !c.ordered) }))
+    .filter((g) => g.cards.length > 0);
+
+  if (groups.length === 0) {
+    container.innerHTML = `<wa-callout class="span">Aucune carte manquante 🎉</wa-callout>`;
+  } else {
+    container.innerHTML = groups
+      .map(
+        (g) => `
+        <section class="missing-group">
+          <h3 class="missing-head">${esc(g.code)} <span class="muted">${esc(g.name)} · ${g.cards.length}</span></h3>
+          <div class="${listView ? "card-list" : "grid"}">${g.cards.map(listView ? setCardRow : setCardTile).join("")}</div>
+        </section>`,
+      )
+      .join("");
+    groups
+      .flatMap((g) => g.cards)
+      .forEach((c) => {
+        const el = container.querySelector(`[data-id="${cssId(c.cardId)}"]`);
+        if (el) wireCardActivate(el, c);
+      });
+  }
+
+  // Edits mutate these card objects; grouping changes on edit → re-render.
+  activeList = {
+    cards: missingGroups.flatMap((g) => g.cards),
+    gridSel: "#missing",
+    ownerScoped: false,
+    patch: false,
+    rerender: paintMissing,
+  };
+}
+
 // Owner currently in effect (0 = aggregate), guarding a stale saved owner id.
 function activeOwner(): number {
   return setOwner && state.owners.some((o) => o.id === setOwner) ? setOwner : 0;
@@ -1029,17 +1114,28 @@ function cardItemsRemove(cardId: string, id: number) {
 function refreshCardInPlace(cardId: string) {
   const ctx = activeList;
   const card = ctx?.cards.find((c) => c.cardId === cardId);
-  const grid = ctx ? document.querySelector<HTMLDivElement>(ctx.gridSel) : null;
-  if (!ctx || !grid || !card || (ctx.scoped && batchAdd)) {
+  if (!ctx || !card || (ctx.ownerScoped && batchAdd)) {
     refreshCollection();
     return;
   }
-  // Set detail applies the owner filter; search shows everything (owner 0).
-  const eff = ctx.scoped ? effectiveCard(card, activeOwner()) : card;
+  // Views whose grouping changes on edit (missing) re-render wholesale.
+  if (!ctx.patch) {
+    ctx.rerender();
+    refreshStats();
+    return;
+  }
+  const grid = document.querySelector<HTMLDivElement>(ctx.gridSel);
+  if (!grid) {
+    refreshCollection();
+    return;
+  }
+  // Set detail applies the owner filter; other views show everything (owner 0).
+  const eff = ctx.ownerScoped ? effectiveCard(card, activeOwner()) : card;
   const node = grid.querySelector(`[data-id="${cssId(cardId)}"]`);
-  const visible = ctx.scoped ? matchesOwnFilter(eff) && (!goalOnly || eff.inGoal) : true;
+  const visible = ctx.visible ? ctx.visible(eff) : true;
   if (!node) {
-    (ctx.onRepaint ?? refreshCollection)();
+    ctx.rerender();
+    refreshStats();
     return;
   } else if (!visible) {
     node.remove();
@@ -1619,8 +1715,9 @@ function setSearchContext() {
   activeList = {
     cards: lastSearch,
     gridSel: "#s-results",
-    scoped: false,
-    onRepaint: paintSearchResults,
+    ownerScoped: false,
+    patch: true,
+    rerender: paintSearchResults,
   };
 }
 

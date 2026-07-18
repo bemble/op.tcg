@@ -2,6 +2,7 @@ import type {
   CardStatus,
   FullStats,
   Item,
+  MissingGroup,
   Owner,
   SearchResult,
   Settings,
@@ -56,6 +57,11 @@ export const api = {
   sets: () => req<SetMeta[]>("/api/sets"),
   setDetail: (code: string) =>
     req<SetDetail>(`/api/sets/${encodeURIComponent(code)}`),
+
+  // Missing (not-acquired) cards, grouped by set. goalOnly restricts to cards
+  // that count toward the collection goal.
+  missing: (goalOnly: boolean) =>
+    req<MissingGroup[]>(`/api/missing?goalOnly=${goalOnly ? 1 : 0}`),
 
   // App settings (collection goal, …) — stored server-side in SQLite.
   getSettings: () => req<Settings>("/api/settings"),
