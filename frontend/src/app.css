@@ -901,9 +901,38 @@ wa-tab-panel::part(base) {
 }
 .curated-thumb {
   width: 32px;
-  height: auto;
+  height: 44px;
+  object-fit: contain;
   border-radius: 3px;
   flex: none;
+  background: var(--wa-color-surface-lowered, #eee);
+}
+.curated-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: none;
+}
+/* Clickable badge showing where a curated card was imported from. */
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  color: #fff;
+  white-space: nowrap;
+}
+.source-badge.src-tcgplayer {
+  background: #2563eb;
+}
+.source-badge.src-cardmarket {
+  background: #e8730c;
+}
+.source-badge.src-other {
+  background: #6b7280;
 }
 .rb-foil {
   background: linear-gradient(135deg, #d6d6e0 0%, #f2f2f7 45%, #b9c0cc 100%);

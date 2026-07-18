@@ -113,6 +113,7 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/curated", s.handleListCurated)
 	mux.HandleFunc("POST /api/curated", s.handleAddCurated)
+	mux.HandleFunc("GET /api/curated/{id}/image", s.handleCuratedImage)
 	mux.HandleFunc("DELETE /api/curated/{id}", s.handleDeleteCurated)
 
 	// Any unmatched /api/* path returns a clean JSON 404 instead of falling

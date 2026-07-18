@@ -54,9 +54,12 @@ func openStore(path string) (*Store, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	// Migration: add the status column to pre-existing databases (no-op / errors
-	// harmlessly when it already exists).
+	// Migrations for pre-existing databases (each errors harmlessly if the column
+	// already exists).
 	_, _ = db.Exec(`ALTER TABLE collection_items ADD COLUMN status TEXT NOT NULL DEFAULT 'owned'`)
+	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN image_url TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN image_blob BLOB`)
 	return &Store{db: db}, nil
 }
 
@@ -445,7 +448,7 @@ func (s *Store) BulkSetLanguageItems(itemIDs []int64, language string) (int, err
 
 // ListCuratedCards returns the user-added cards, newest first.
 func (s *Store) ListCuratedCards() ([]curatedCard, error) {
-	rows, err := s.db.Query(`SELECT card_id, code, name, rarity, product_id
+	rows, err := s.db.Query(`SELECT card_id, code, name, rarity, product_id, image_url, source_url
 		FROM curated_cards ORDER BY created_at DESC, card_id`)
 	if err != nil {
 		return nil, err
@@ -454,7 +457,7 @@ func (s *Store) ListCuratedCards() ([]curatedCard, error) {
 	out := []curatedCard{}
 	for rows.Next() {
 		var c curatedCard
-		if err := rows.Scan(&c.cardID, &c.code, &c.name, &c.rarity, &c.productID); err != nil {
+		if err := rows.Scan(&c.cardID, &c.code, &c.name, &c.rarity, &c.productID, &c.imageURL, &c.sourceURL); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -464,9 +467,24 @@ func (s *Store) ListCuratedCards() ([]curatedCard, error) {
 
 // AddCuratedCard inserts a curated card (fails if its card_id already exists).
 func (s *Store) AddCuratedCard(c curatedCard) error {
-	_, err := s.db.Exec(`INSERT INTO curated_cards (card_id, code, name, rarity, product_id)
-		VALUES (?, ?, ?, ?, ?)`, c.cardID, c.code, c.name, c.rarity, c.productID)
+	var blob any
+	if len(c.imageBlob) > 0 {
+		blob = c.imageBlob
+	}
+	_, err := s.db.Exec(`INSERT INTO curated_cards (card_id, code, name, rarity, product_id, image_url, source_url, image_blob)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, c.cardID, c.code, c.name, c.rarity, c.productID, c.imageURL, c.sourceURL, blob)
 	return err
+}
+
+// CuratedImage returns the stored (downloaded) image bytes for a curated card,
+// or (nil, nil) if there's none.
+func (s *Store) CuratedImage(cardID string) ([]byte, error) {
+	var blob []byte
+	err := s.db.QueryRow(`SELECT image_blob FROM curated_cards WHERE card_id=?`, cardID).Scan(&blob)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return blob, err
 }
 
 // DeleteCuratedCard removes a curated card by its card_id.

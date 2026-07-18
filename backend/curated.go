@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,7 +27,10 @@ type curatedCard struct {
 	code      string
 	name      string
 	rarity    string
-	productID int64 // TCGplayer productId -> image URL
+	productID int64  // TCGplayer productId -> image URL (0 for manual entries)
+	imageURL  string // image URL served for this card (may be a local /api path)
+	sourceURL string // where it was imported from (TCGplayer/Cardmarket/…)
+	imageBlob []byte // downloaded + downscaled image bytes (manual imports)
 }
 
 // Built-in curated cards (the "P-073/074/075 Tin Pack Set Vol. 2" alt arts).
@@ -36,12 +41,16 @@ var curatedCards = []curatedCard{
 }
 
 // curatedToCard materialises one curated entry into a catalogue Card. The image
-// is served from TCGplayer's CDN, same as DON!! cards.
+// is an explicit URL (manual entries) or TCGplayer's CDN by product id; empty
+// for manual entries with no image (the UI then shows a placeholder).
 func curatedToCard(c curatedCard) Card {
-	img := donImageURL(c.productID)
+	img := c.imageURL
+	if img == "" && c.productID > 0 {
+		img = donImageURL(c.productID)
+	}
 	raw, _ := json.Marshal(map[string]any{
 		"id": c.cardID, "code": c.code, "name": c.name, "rarity": c.rarity,
-		"source": "tcgplayer.com", "productId": c.productID, "curated": true,
+		"productId": c.productID, "curated": true,
 	})
 	return Card{
 		CardID:     c.cardID,
@@ -94,9 +103,14 @@ func (s *server) resolveCuratedID(code string) string {
 }
 
 func curatedJSON(c curatedCard) map[string]any {
+	img := c.imageURL
+	if img == "" && c.productID > 0 {
+		img = donImageURL(c.productID)
+	}
 	return map[string]any{
 		"cardId": c.cardID, "code": c.code, "name": c.name,
-		"rarity": c.rarity, "productId": c.productID, "image": donImageURL(c.productID),
+		"rarity": c.rarity, "productId": c.productID, "image": img,
+		"sourceUrl": c.sourceURL,
 	}
 }
 
@@ -113,16 +127,62 @@ func (s *server) handleListCurated(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleAddCurated takes a TCGplayer product URL (or id), looks up the card's
-// number/name/rarity, stores it and merges it into the catalogue immediately.
+// handleAddCurated adds a card the automated sources miss. Two modes:
+//   - {url}: a TCGplayer product URL/id — we look up number/name/rarity/image;
+//   - {code, name, rarity?, imageUrl?}: manual entry, for cards only on other
+//     sites (e.g. Cardmarket, which we can't scrape). The code decides the set;
+//     a parallel slot is picked if the code already exists.
 func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL string `json:"url"`
+		URL       string `json:"url"`
+		Code      string `json:"code"`
+		Name      string `json:"name"`
+		Rarity    string `json:"rarity"`
+		ImageURL  string `json:"imageUrl"`
+		SourceURL string `json:"sourceUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
+
+	var c curatedCard
+	if strings.TrimSpace(req.Code) != "" || strings.TrimSpace(req.Name) != "" {
+		// Manual entry.
+		code := strings.ToUpper(strings.TrimSpace(req.Code))
+		name := strings.TrimSpace(req.Name)
+		if code == "" || name == "" {
+			writeErr(w, http.StatusBadRequest, "code et nom requis")
+			return
+		}
+		rarity := strings.TrimSpace(req.Rarity)
+		if rarity == "" {
+			rarity = "PR"
+		}
+		cardID := s.resolveCuratedID(code)
+		c = curatedCard{
+			cardID:    cardID,
+			code:      code,
+			name:      name,
+			rarity:    rarity,
+			sourceURL: strings.TrimSpace(req.SourceURL),
+		}
+		// Download + downscale the image now and store it, so it's served from
+		// our own origin (the /api/img proxy only whitelists a few hosts, and
+		// the source may block hotlinking later). On failure, import anyway.
+		if raw := strings.TrimSpace(req.ImageURL); raw != "" {
+			if blob, ferr := fetchAndThumb(r.Context(), raw); ferr == nil && len(blob) > 0 {
+				c.imageBlob = blob
+				c.imageURL = "/api/curated/" + cardID + "/image"
+			} else if ferr != nil {
+				log.Printf("curated image fetch failed (%s): %v", raw, ferr)
+			}
+		}
+		s.finishAddCurated(w, c)
+		return
+	}
+
+	// TCGplayer mode.
 	pid, ok := parseTCGProductID(req.URL)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "URL ou identifiant produit TCGplayer invalide")
@@ -145,13 +205,70 @@ func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
 		cardID = code
 		name = prod.FullName // no number to distinguish it — keep the full name
 	}
-	c := curatedCard{
+	// Keep the pasted URL as the source; fall back to a canonical product URL if
+	// only a bare id was given.
+	src := strings.TrimSpace(req.URL)
+	if !strings.Contains(src, "://") {
+		src = fmt.Sprintf("https://www.tcgplayer.com/product/%d", prod.ProductID)
+	}
+	c = curatedCard{
 		cardID:    cardID,
 		code:      code,
 		name:      name,
 		rarity:    prod.Rarity,
 		productID: prod.ProductID,
+		sourceURL: src,
 	}
+	s.finishAddCurated(w, c)
+}
+
+// fetchAndThumb downloads an image (browser-ish headers so hotlink-protected
+// hosts serve it), downscales it and re-encodes as JPEG for local storage.
+func fetchAndThumb(ctx context.Context, rawURL string) ([]byte, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, fmt.Errorf("URL image invalide")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36")
+	req.Header.Set("Referer", u.Scheme+"://"+u.Host+"/")
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("image %s", resp.Status)
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	out, err := processImage(data, 500) // downscale + re-encode JPEG (see image.go)
+	if err != nil {
+		return nil, fmt.Errorf("image illisible: %w", err)
+	}
+	return out, nil
+}
+
+func (s *server) handleCuratedImage(w http.ResponseWriter, r *http.Request) {
+	blob, err := s.st.CuratedImage(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(blob) == 0 {
+		writeErr(w, http.StatusNotFound, "pas d'image")
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	_, _ = w.Write(blob)
+}
+
+// finishAddCurated persists a curated card and merges it into the catalogue.
+func (s *server) finishAddCurated(w http.ResponseWriter, c curatedCard) {
 	if err := s.st.AddCuratedCard(c); err != nil {
 		writeErr(w, http.StatusConflict, "ajout impossible (déjà présente ?): "+err.Error())
 		return

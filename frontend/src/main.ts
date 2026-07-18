@@ -1683,6 +1683,33 @@ function renderPrefs() {
       <wa-input id="curated-url" placeholder="https://www.tcgplayer.com/product/…" style="flex:1"></wa-input>
       <wa-button id="curated-add" variant="brand">Ajouter</wa-button>
     </div>
+    <wa-details class="curated-manual" summary="Saisie manuelle (carte hors TCGplayer, ex. Cardmarket)">
+      <p class="muted small">Pour une carte absente de TCGplayer. Le <strong>code</strong> détermine le set
+      (ex. <code>OP08-043</code> → un parallèle si le code existe déjà, <code>P</code> pour une promo).
+      L'image est optionnelle (URL directe d'une image).</p>
+      <div class="form">
+        <div class="field-row">
+          <label class="field field-grow">Nom
+            <wa-input id="m-name" placeholder="Edward.Newgate"></wa-input>
+          </label>
+          <label class="field">Code
+            <wa-input id="m-code" placeholder="OP08-043" style="width:9rem"></wa-input>
+          </label>
+          <label class="field">Rareté
+            <wa-input id="m-rarity" placeholder="PR" style="width:6rem"></wa-input>
+          </label>
+        </div>
+        <label>URL de l'image (optionnel)
+          <wa-input id="m-image" placeholder="https://…/image.jpg"></wa-input>
+        </label>
+        <label>URL source (optionnel, ex. Cardmarket)
+          <wa-input id="m-source" placeholder="https://www.cardmarket.com/…"></wa-input>
+        </label>
+        <div class="add-actions">
+          <wa-button id="curated-add-manual" variant="brand">Ajouter</wa-button>
+        </div>
+      </div>
+    </wa-details>
     <div id="curated-list" class="owner-list"></div>
 
     <h2 style="margin-top:2rem">Co-propriétaires de la collection</h2>
@@ -1741,15 +1768,16 @@ function renderPrefs() {
       }
     }),
   );
-  const addCurated = async () => {
-    const input = host.querySelector("#curated-url") as any;
-    const url = (input?.value || "").trim();
-    if (!url) return;
-    const btn = host.querySelector("#curated-add") as any;
+  const submitCurated = async (
+    payload: Parameters<typeof api.addCurated>[0],
+    btnSel: string,
+    onOk: () => void,
+  ) => {
+    const btn = host.querySelector(btnSel) as any;
     if (btn) btn.loading = true;
     try {
-      const c = await api.addCurated(url);
-      input.value = "";
+      const c = await api.addCurated(payload);
+      onOk();
       toast(`Ajoutée : ${c.code} — ${c.name}`);
       await renderCuratedList();
       // The catalogue changed — refresh the collection view.
@@ -1761,14 +1789,57 @@ function renderPrefs() {
       if (btn) btn.loading = false;
     }
   };
+  const addCurated = () => {
+    const input = host.querySelector("#curated-url") as any;
+    const url = (input?.value || "").trim();
+    if (!url) return;
+    submitCurated({ url }, "#curated-add", () => (input.value = ""));
+  };
+  const addCuratedManual = () => {
+    const val = (sel: string) => ((host.querySelector(sel) as any)?.value || "").trim();
+    const name = val("#m-name");
+    const code = val("#m-code");
+    if (!name || !code) {
+      toast("Nom et code requis", "danger");
+      return;
+    }
+    submitCurated(
+      { name, code, rarity: val("#m-rarity"), imageUrl: val("#m-image"), sourceUrl: val("#m-source") },
+      "#curated-add-manual",
+      () => {
+        ["#m-name", "#m-code", "#m-rarity", "#m-image", "#m-source"].forEach((s) => {
+          const el = host.querySelector(s) as any;
+          if (el) el.value = "";
+        });
+      },
+    );
+  };
   host.querySelector("#curated-add")?.addEventListener("click", addCurated);
   host.querySelector("#curated-url")?.addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") addCurated();
   });
+  host.querySelector("#curated-add-manual")?.addEventListener("click", addCuratedManual);
 
   renderOwnerList();
   renderCuratedList();
   renderCatalogue();
+}
+
+// Human-readable source site from a URL host (frontend-only badge).
+function sourceSite(url: string): string {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, "");
+    if (h.includes("tcgplayer")) return "TCGplayer";
+    if (h.includes("cardmarket")) return "Cardmarket";
+    return h;
+  } catch {
+    return "";
+  }
+}
+function siteClass(site: string): string {
+  if (site === "TCGplayer") return "src-tcgplayer";
+  if (site === "Cardmarket") return "src-cardmarket";
+  return "src-other";
 }
 
 async function renderCuratedList() {
@@ -1786,16 +1857,28 @@ async function renderCuratedList() {
     return;
   }
   list.innerHTML = cards
-    .map(
-      (c) => `
+    .map((c) => {
+      const site = sourceSite(c.sourceUrl);
+      const badge =
+        c.sourceUrl && site
+          ? `<a class="source-badge ${siteClass(site)}" href="${esc(c.sourceUrl)}" target="_blank" rel="noopener" title="${esc(c.sourceUrl)}">${esc(site)}</a>`
+          : "";
+      const thumb = c.image
+        ? `<img class="curated-thumb" src="${esc(proxied(c.image, 80))}" alt="" loading="lazy"
+             onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'curated-thumb placeholder'}))" />`
+        : `<div class="curated-thumb placeholder"></div>`;
+      return `
       <div class="owner-row curated-row" data-id="${esc(c.cardId)}">
         <span class="curated-info">
-          <img class="curated-thumb" src="${esc(proxied(c.image, 80))}" alt="" loading="lazy" />
+          ${thumb}
           <span>${esc(c.code)} · ${esc(c.name)} <span class="muted small">${esc(c.cardId)}</span></span>
         </span>
-        <wa-button class="curated-del" size="small" appearance="outlined" variant="danger">Supprimer</wa-button>
-      </div>`,
-    )
+        <span class="curated-actions">
+          ${badge}
+          <wa-button class="curated-del" size="small" appearance="outlined" variant="danger">Supprimer</wa-button>
+        </span>
+      </div>`;
+    })
     .join("");
   cards.forEach((c) =>
     list

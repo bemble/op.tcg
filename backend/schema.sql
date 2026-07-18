@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS curated_cards (
     code       TEXT NOT NULL,
     name       TEXT NOT NULL,
     rarity     TEXT NOT NULL DEFAULT 'PR',
-    product_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL DEFAULT 0, -- TCGplayer product id (0 for manual)
+    image_url  TEXT NOT NULL DEFAULT '',   -- image URL served for this card (may be a local /api path)
+    image_blob BLOB,                        -- downloaded + downscaled image (manual imports)
+    source_url TEXT NOT NULL DEFAULT '',   -- where the card was imported from
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
