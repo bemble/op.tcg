@@ -384,6 +384,8 @@ function router() {
     renderTracking(); // re-fetch fresh each visit
   } else if (tab === "stats") {
     renderStats(); // re-fetch fresh each visit
+  } else if (tab === "search") {
+    setSearchContext(); // search is rendered once; re-point the active list
   }
 }
 
@@ -633,9 +635,16 @@ function cardSortRank(c: SetCard): number {
 // have are shown greyed (as missing), not hidden.
 let setOwner = parseInt(localStorage.getItem("setOwner") || "0", 10) || 0;
 
-// The set detail currently displayed, kept so a mutation can patch a single
-// tile in place instead of tearing down and refetching the whole view.
-let activeDetail: SetDetail | null = null;
+// The card list currently on screen (set detail or search), kept so a mutation
+// can patch a single tile in place instead of refetching the whole view.
+interface ActiveList {
+  cards: SetCard[]; // the backing model (its items get mutated in place)
+  gridSel: string; // container selector holding the tiles/rows
+  scoped: boolean; // set detail (owner/status filters + progress) vs search (plain)
+  onProgress?: () => void; // refresh the set header counter (set detail only)
+  onRepaint?: () => void; // full repaint of this view (fallback)
+}
+let activeList: ActiveList | null = null;
 
 // effectiveCard recomputes the status flags/quantity from the point of view of
 // one owner (keeping items intact for the manage dialog). ownerId 0 = aggregate
@@ -678,7 +687,7 @@ function errCallout(e: unknown): string {
 
 async function renderSetsOverview() {
   colSet = null;
-  activeDetail = null;
+  activeList = null;
   const host = document.querySelector<HTMLDivElement>("#collection")!;
   host.innerHTML = `<div class="loading"><wa-spinner></wa-spinner></div>`;
   let sets;
@@ -771,7 +780,13 @@ async function renderSetDetail(code: string) {
     host.innerHTML = errCallout(e);
     return;
   }
-  activeDetail = detail;
+  activeList = {
+    cards: detail.cards,
+    gridSel: "#set-grid",
+    scoped: true,
+    onProgress: () => updateSetProgress(detail),
+    onRepaint: () => paintSetGrid(detail),
+  };
   const pct = detail.total ? Math.round((detail.owned / detail.total) * 100) : 0;
   host.innerHTML = `
     <div class="set-detail-head">
@@ -992,7 +1007,7 @@ function recomputeAggregate(card: SetCard) {
   card.wishlist = items.some((it) => it.status === "wishlist");
 }
 function cardItemsUpsert(cardId: string, item: Item) {
-  const card = activeDetail?.cards.find((c) => c.cardId === cardId);
+  const card = activeList?.cards.find((c) => c.cardId === cardId);
   if (!card) return;
   const items = card.items ? [...card.items] : [];
   const i = items.findIndex((x) => x.id === item.id);
@@ -1002,29 +1017,30 @@ function cardItemsUpsert(cardId: string, item: Item) {
   recomputeAggregate(card);
 }
 function cardItemsRemove(cardId: string, id: number) {
-  const card = activeDetail?.cards.find((c) => c.cardId === cardId);
+  const card = activeList?.cards.find((c) => c.cardId === cardId);
   if (!card?.items) return;
   card.items = card.items.filter((x) => x.id !== id);
   recomputeAggregate(card);
 }
 
-// After a possession mutation, repaint only the affected card's tile/row and the
-// header progress — no spinner, no refetch, scroll preserved. Falls back to a
-// full repaint for the cases a single-node swap can't express (batch mode, or a
-// card not currently in the DOM).
+// After a possession mutation, repaint only the affected card's tile/row (and,
+// on the set detail, the header progress) — no spinner, no refetch, scroll
+// preserved. Works for both the set-detail grid and the search results.
 function refreshCardInPlace(cardId: string) {
-  const detail = activeDetail;
-  const grid = document.querySelector<HTMLDivElement>("#set-grid");
-  const card = detail?.cards.find((c) => c.cardId === cardId);
-  if (!detail || !grid || batchAdd || !card) {
+  const ctx = activeList;
+  const card = ctx?.cards.find((c) => c.cardId === cardId);
+  const grid = ctx ? document.querySelector<HTMLDivElement>(ctx.gridSel) : null;
+  if (!ctx || !grid || !card || (ctx.scoped && batchAdd)) {
     refreshCollection();
     return;
   }
-  const eff = effectiveCard(card, activeOwner());
+  // Set detail applies the owner filter; search shows everything (owner 0).
+  const eff = ctx.scoped ? effectiveCard(card, activeOwner()) : card;
   const node = grid.querySelector(`[data-id="${cssId(cardId)}"]`);
-  const visible = matchesOwnFilter(eff) && (!goalOnly || eff.inGoal);
+  const visible = ctx.scoped ? matchesOwnFilter(eff) && (!goalOnly || eff.inGoal) : true;
   if (!node) {
-    paintSetGrid(detail); // was filtered out; safest to repaint the grid
+    (ctx.onRepaint ?? refreshCollection)();
+    return;
   } else if (!visible) {
     node.remove();
   } else {
@@ -1035,7 +1051,7 @@ function refreshCardInPlace(cardId: string) {
     node.replaceWith(fresh);
     wireCardActivate(fresh, card);
   }
-  updateSetProgress(detail);
+  ctx.onProgress?.();
   refreshStats();
 }
 
@@ -1560,8 +1576,9 @@ function renderSearch() {
   wireViewToggle(host, () => paintSearchResults());
 }
 
-// Last search results, kept so the grid/list toggle can repaint without refetching.
-let lastSearch: Card[] = [];
+// Last search results (annotated with ownership), kept so the grid/list toggle
+// can repaint without refetching.
+let lastSearch: SetCard[] = [];
 
 async function doSearch() {
   const results = document.querySelector<HTMLDivElement>("#s-results")!;
@@ -1576,73 +1593,35 @@ async function doSearch() {
   }
 }
 
+// Search results render exactly like the set-detail grid: status badges + click
+// to open the add/manage dialog. Register the active list so edits patch in place.
 function paintSearchResults() {
   const results = document.querySelector<HTMLDivElement>("#s-results");
   if (!results) return;
+  setSearchContext();
   if (lastSearch.length === 0) {
     results.className = "grid";
     results.innerHTML = `<wa-callout class="span">Aucune carte trouvée.</wa-callout>`;
     return;
   }
-  results.className = viewMode === "list" ? "card-list" : "grid";
-  const render = viewMode === "list" ? searchRow : searchCard;
-  results.innerHTML = lastSearch.map((c, i) => render(c, i)).join("");
-  lastSearch.forEach((c, i) => wireSearchCard(c, i));
-}
-
-function searchCard(c: Card, i: number): string {
-  return `
-  <wa-card class="tile" data-i="${i}">
-    ${imgTag(c)}
-    <div class="tile-body">
-      <div class="tile-name" title="${esc(c.name)}">${esc(c.name)}</div>
-      <div class="muted small">${isDon(c) ? "" : esc(c.setName || c.code) + " "}${cardRarityBadge(c)}</div>
-      <div class="add-grid">
-        <wa-select class="owner" value="" style="min-width:120px">${ownerOptions(null)}</wa-select>
-        <wa-select class="lang" value="EN" style="width:90px">${langOptions("EN")}</wa-select>
-        <wa-input class="qty-in" type="number" min="1" value="1" style="width:70px"></wa-input>
-      </div>
-      <wa-input class="note-in" placeholder="Commentaire (optionnel)" size="small"></wa-input>
-      <wa-button class="add" size="small" variant="brand">Ajouter</wa-button>
-    </div>
-  </wa-card>`;
-}
-
-function searchRow(c: Card, i: number): string {
-  return `
-  <div class="list-row" data-i="${i}">
-    ${thumbTag(c)}
-    <div class="list-main">
-      <span class="list-name" title="${esc(c.name)}">${esc(c.name)}</span>
-      <span class="list-meta">${isDon(c) ? "" : `${esc(c.code)}${c.setName ? " · " + esc(c.setName) : ""} `}${cardRarityBadge(c)}</span>
-    </div>
-    <div class="list-actions add-grid">
-      <wa-select class="owner" value="" style="min-width:120px">${ownerOptions(null)}</wa-select>
-      <wa-select class="lang" value="EN" style="width:84px">${langOptions("EN")}</wa-select>
-      <wa-input class="qty-in" type="number" min="1" value="1" style="width:64px"></wa-input>
-      <wa-input class="note-in" placeholder="Commentaire" size="small" style="min-width:140px"></wa-input>
-      <wa-button class="add icon-btn" size="small" variant="brand" title="Ajouter" aria-label="Ajouter"><wa-icon library="fa" name="plus"></wa-icon></wa-button>
-    </div>
-  </div>`;
-}
-
-function wireSearchCard(c: Card, i: number) {
-  const el = document.querySelector<HTMLElement>(`#s-results [data-i="${i}"]`);
-  if (!el) return;
-  el.querySelector(".add")?.addEventListener("click", async () => {
-    const ownerId = parseOwner((el.querySelector(".owner") as any)?.value || "");
-    const language = (el.querySelector(".lang") as any)?.value || "EN";
-    const quantity = parseInt((el.querySelector(".qty-in") as any)?.value, 10) || 1;
-    const notes = (el.querySelector(".note-in") as any)?.value || "";
-    try {
-      await api.addItem({ cardId: c.cardId, ownerId, language, quantity, notes });
-      const who = ownerId ? state.owners.find((o) => o.id === ownerId)?.name : "collection";
-      toast(`Ajouté : ${c.name} → ${who}`);
-      refreshStats();
-    } catch (e) {
-      toast((e as Error).message, "danger");
-    }
+  const listView = viewMode === "list";
+  document.querySelector("#search")?.classList.toggle("view-list", listView);
+  results.className = listView ? "card-list" : "grid";
+  results.innerHTML = lastSearch.map(listView ? setCardRow : setCardTile).join("");
+  lastSearch.forEach((c) => {
+    const el = results.querySelector(`[data-id="${cssId(c.cardId)}"]`);
+    if (el) wireCardActivate(el, c);
   });
+}
+
+// Point the active list at the search results so in-place edits target #s-results.
+function setSearchContext() {
+  activeList = {
+    cards: lastSearch,
+    gridSel: "#s-results",
+    scoped: false,
+    onRepaint: paintSearchResults,
+  };
 }
 
 // ---------- preferences tab ----------

@@ -151,8 +151,12 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if limit > 0 {
 		totalPages = (total + limit - 1) / limit
 	}
-	writeJSON(w, http.StatusOK, SearchResult{
-		Page: page, Limit: limit, Total: total, TotalPages: totalPages, Cards: cards,
+	// Annotate with the user's ownership/status so search results behave like the
+	// set-detail grid (owned/ordered/wishlist badges, click to manage).
+	annotated := s.annotateCards(cards, s.ownedByCard(), s.collectionGoal())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"page": page, "limit": limit, "total": total, "totalPages": totalPages,
+		"cards": annotated,
 	})
 }
 

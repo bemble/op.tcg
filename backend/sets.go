@@ -98,30 +98,15 @@ func (s *server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 	goal := s.collectionGoal()
 	byCard := s.ownedByCard()
 
-	out := make([]setCard, 0, len(cards))
+	out := s.annotateCards(cards, byCard, goal)
 	total, ownedCount := 0, 0
-	for _, c := range cards {
-		items := byCard[c.CardID]
-		qty := 0
-		for _, it := range items {
-			if normStatus(it.Status) == statusOwned {
-				qty += it.Quantity
-			}
-		}
-		owned := hasStatus(items, statusOwned)
-		ordered := hasStatus(items, statusOrdered)
-		wishlist := hasStatus(items, statusWishlist)
-		counts := inGoal(parallelLevel(c.CardID, c.Code), goal)
-		if counts {
+	for _, c := range out {
+		if c.InGoal {
 			total++
-			if owned || ordered { // "acquired" — ordered counts, wishlist doesn't
+			if c.Owned || c.Ordered { // "acquired" — ordered counts, wishlist doesn't
 				ownedCount++
 			}
 		}
-		out = append(out, setCard{
-			Card: c, Owned: owned, Ordered: ordered, Wishlist: wishlist,
-			Quantity: qty, Items: items, InGoal: counts,
-		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"code":  prefix,
@@ -130,4 +115,29 @@ func (s *server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 		"owned": ownedCount,
 		"cards": out,
 	})
+}
+
+// annotateCards turns catalogue cards into setCards annotated with the user's
+// ownership/status per card. Shared by the set-detail and search views.
+func (s *server) annotateCards(cards []Card, byCard map[string][]Item, goal string) []setCard {
+	out := make([]setCard, 0, len(cards))
+	for _, c := range cards {
+		items := byCard[c.CardID]
+		qty := 0
+		for _, it := range items {
+			if normStatus(it.Status) == statusOwned {
+				qty += it.Quantity
+			}
+		}
+		out = append(out, setCard{
+			Card:     c,
+			Owned:    hasStatus(items, statusOwned),
+			Ordered:  hasStatus(items, statusOrdered),
+			Wishlist: hasStatus(items, statusWishlist),
+			Quantity: qty,
+			Items:    items,
+			InGoal:   inGoal(parallelLevel(c.CardID, c.Code), goal),
+		})
+	}
+	return out
 }

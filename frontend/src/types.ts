@@ -14,7 +14,7 @@ export interface SearchResult {
   limit: number;
   total: number;
   totalPages: number;
-  cards: Card[];
+  cards: SetCard[];
 }
 
 export interface Owner {
