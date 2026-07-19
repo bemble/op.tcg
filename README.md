@@ -19,6 +19,7 @@ What it does (deliberately minimal):
 - Co-owners are managed as a free-text list in **Préférences**, then picked from a dropdown per card.
 - **Installable** as a PWA (iOS/Android home-screen app, standalone, offline-capable shell).
 - **MCP server** at `/mcp` so an assistant can search, check completion and manage the collection (see below).
+- **Bilingual UI** (Français / English): auto-detected from the browser, switchable in *Préférences*. (Backend error messages stay French.)
 
 No multi-game, no regions, no accounts.
 

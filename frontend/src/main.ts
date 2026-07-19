@@ -20,6 +20,7 @@ import "@awesome.me/webawesome/dist/components/details/details.js";
 import "./icons"; // registers the offline Font Awesome "fa" <wa-icon> library
 import "./app.css";
 import { api, type CuratedCard } from "./api";
+import { t, getLang, setLang, LANGS, initLang, type Lang } from "./i18n";
 import {
   COLLECTION_GOALS,
   FAMILIES,
@@ -67,7 +68,7 @@ function proxied(src: string, width?: number): string {
 
 function imgTag(card: Card, zoom = true): string {
   const raw = card.imageSmall || card.imageLarge || "";
-  if (!raw) return `<div class="card-img placeholder">Pas d'image</div>`;
+  if (!raw) return `<div class="card-img placeholder">${t("common.noImage")}</div>`;
   // data-full points at the full-size proxied image; a delegated click handler
   // opens it in a lightbox (see initLightbox). Omitted where the click is used
   // for something else (set-detail tiles open the manage dialog instead).
@@ -92,9 +93,9 @@ let viewMode: ViewMode = localStorage.getItem("viewMode") === "list" ? "list" : 
 
 function viewToggle(): string {
   return `
-  <div class="view-toggle" role="group" aria-label="Affichage">
-    <button class="vt-grid${viewMode === "grid" ? " active" : ""}" type="button" title="Vue grille" aria-label="Vue grille"><wa-icon library="fa" name="table-cells"></wa-icon></button>
-    <button class="vt-list${viewMode === "list" ? " active" : ""}" type="button" title="Vue liste" aria-label="Vue liste"><wa-icon library="fa" name="list"></wa-icon></button>
+  <div class="view-toggle" role="group" aria-label="${t("view.display")}">
+    <button class="vt-grid${viewMode === "grid" ? " active" : ""}" type="button" title="${t("view.grid")}" aria-label="${t("view.grid")}"><wa-icon library="fa" name="table-cells"></wa-icon></button>
+    <button class="vt-list${viewMode === "list" ? " active" : ""}" type="button" title="${t("view.list")}" aria-label="${t("view.list")}"><wa-icon library="fa" name="list"></wa-icon></button>
   </div>`;
 }
 
@@ -134,7 +135,7 @@ function initLightbox() {
     }
     // data-dialog="close" is what wa-dialog wires up to close itself.
     lightbox.innerHTML = `
-      <wa-button class="lightbox-close" appearance="plain" data-dialog="close" aria-label="Fermer">×</wa-button>
+      <wa-button class="lightbox-close" appearance="plain" data-dialog="close" aria-label="${t("action.close")}">×</wa-button>
       <img class="lightbox-img" src="${esc(full)}" alt="${esc(img.alt)}" />`;
     (lightbox as any).open = true;
   });
@@ -178,9 +179,9 @@ function statusBadge(c: SetCard): string {
   if (c.owned) return `<span class="qty-badge">${ownedFlags(c)} ×${c.quantity}</span>`;
   if (c.ordered) {
     const f = langFlags(c, "ordered");
-    return `<span class="status-badge ordered" title="Commandée">🛒${f ? " " + f : ""}</span>`;
+    return `<span class="status-badge ordered" title="${t("status.ordered")}">🛒${f ? " " + f : ""}</span>`;
   }
-  if (c.wishlist) return `<span class="status-badge wishlist" title="Wishlist">❤</span>`;
+  if (c.wishlist) return `<span class="status-badge wishlist" title="${t("status.wishlist")}">❤</span>`;
   return "";
 }
 
@@ -189,16 +190,16 @@ function statusMetaList(c: SetCard): string {
   if (c.owned) return `<span class="own-flags-inline">${ownedFlags(c)}</span>`;
   if (c.ordered) {
     const f = langFlags(c, "ordered");
-    return `<span class="status-tag ordered">🛒 Commandée${f ? " " + f : ""}</span>`;
+    return `<span class="status-tag ordered">🛒 ${t("status.ordered")}${f ? " " + f : ""}</span>`;
   }
-  if (c.wishlist) return `<span class="status-tag wishlist">❤ Wishlist</span>`;
+  if (c.wishlist) return `<span class="status-tag wishlist">❤ ${t("status.wishlist")}</span>`;
   return "";
 }
 
 // Owner <wa-option>s, with an "unspecified" entry mapped to value "".
 function ownerOptions(selected: number | null): string {
   const sel = selected ?? "";
-  const none = `<wa-option value=""${sel === "" ? " selected" : ""}>Non attribué</wa-option>`;
+  const none = `<wa-option value=""${sel === "" ? " selected" : ""}>${t("common.unassigned")}</wa-option>`;
   return (
     none +
     state.owners
@@ -218,7 +219,9 @@ function parseOwner(v: string): number | null {
 // Compact segmented controls (icon + label) for the add/edit dialogs — saves
 // vertical space vs full selects. On mobile only the icon/flag shows (CSS).
 type SegOption = { value: string; icon: string; label: string };
-const STATUS_SEG: SegOption[] = STATUSES.map((s) => ({ value: s.value, icon: s.emoji, label: s.label }));
+// Built per-call so labels follow the current interface language.
+const statusSeg = (): SegOption[] =>
+  STATUSES.map((s) => ({ value: s.value, icon: s.emoji, label: t("status." + s.value) }));
 const LANG_SEG: SegOption[] = LANGUAGES.map((l) => ({ value: l, icon: LANG_FLAGS[l] ?? "", label: l }));
 
 function segmentedControl(name: string, opts: SegOption[], selected: string): string {
@@ -250,14 +253,14 @@ function wireSegments(root: ParentNode, onStatusChange?: () => void) {
 // One possession's summary line in the manage dialog. Owned copies show
 // language + quantity; ordered/wishlist show just their status.
 function possessionLine(it: Item): string {
-  const owner = it.ownerName ? esc(it.ownerName) : "Non attribué";
+  const owner = it.ownerName ? esc(it.ownerName) : t("common.unassigned");
   const notes = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
   const status = it.status || "owned";
   if (status === "owned") {
     return `${owner} · ${langLabel(it.language)} · ×${it.quantity}${notes}`;
   }
   const s = STATUSES.find((x) => x.value === status);
-  const badge = s ? `${s.emoji} ${esc(s.label)}` : esc(status);
+  const badge = s ? `${s.emoji} ${esc(t("status." + status))}` : esc(status);
   const lang = status === "ordered" && it.language ? ` · ${langLabel(it.language)}` : "";
   return `${owner} · ${badge}${lang}${notes}`;
 }
@@ -285,6 +288,7 @@ function registerServiceWorker() {
 }
 
 async function boot() {
+  initLang();
   registerServiceWorker();
   initLightbox();
   app.innerHTML = `<div class="loading"><wa-spinner></wa-spinner></div>`;
@@ -302,9 +306,7 @@ async function boot() {
     if (Array.isArray(settings.families) && settings.families.length) state.families = settings.families;
     sync = status;
   } catch (e) {
-    app.innerHTML = `<wa-callout variant="danger">Backend injoignable : ${esc(
-      (e as Error).message,
-    )}</wa-callout>`;
+    app.innerHTML = `<wa-callout variant="danger">${esc(t("err.backend", { msg: (e as Error).message }))}</wa-callout>`;
     return;
   }
   renderShell();
@@ -319,12 +321,12 @@ function renderShell() {
       <div id="stats" class="stats"></div>
     </header>
     <wa-tab-group>
-      <wa-tab slot="nav" panel="collection">Ma collection</wa-tab>
-      <wa-tab slot="nav" panel="stats">Statistiques</wa-tab>
-      <wa-tab slot="nav" panel="missing">Manquantes</wa-tab>
-      <wa-tab slot="nav" panel="search">Rechercher &amp; ajouter</wa-tab>
-      <wa-tab slot="nav" panel="tracking">Suivi</wa-tab>
-      <wa-tab slot="nav" panel="prefs">Préférences</wa-tab>
+      <wa-tab slot="nav" panel="collection">${t("tab.collection")}</wa-tab>
+      <wa-tab slot="nav" panel="stats">${t("tab.stats")}</wa-tab>
+      <wa-tab slot="nav" panel="missing">${t("tab.missing")}</wa-tab>
+      <wa-tab slot="nav" panel="search">${t("tab.search")}</wa-tab>
+      <wa-tab slot="nav" panel="tracking">${t("tab.tracking")}</wa-tab>
+      <wa-tab slot="nav" panel="prefs">${t("tab.prefs")}</wa-tab>
       <wa-tab-panel name="collection"><div id="collection"></div></wa-tab-panel>
       <wa-tab-panel name="stats"><div id="stats-page"></div></wa-tab-panel>
       <wa-tab-panel name="missing"><div id="missing-page"></div></wa-tab-panel>
@@ -401,7 +403,7 @@ async function refreshStats() {
   if (!host) return;
   try {
     const s = await api.stats();
-    host.innerHTML = `<wa-badge variant="brand" pill>${s.uniqueCards} cartes possédées</wa-badge>`;
+    host.innerHTML = `<wa-badge variant="brand" pill>${t("header.owned", { n: s.uniqueCards })}</wa-badge>`;
   } catch {
     host.innerHTML = "";
   }
@@ -412,7 +414,7 @@ async function refreshStats() {
 // One tracked (ordered/wishlist) card as a row with quick edit/delete.
 function trackRow(it: Item): string {
   const c = it.card;
-  const owner = it.ownerName ? esc(it.ownerName) : "Non attribué";
+  const owner = it.ownerName ? esc(it.ownerName) : t("common.unassigned");
   // Zoom enabled (data-full): the row has explicit action buttons, so tapping
   // the thumbnail opens the lightbox instead of an edit dialog.
   const thumb = c ? thumbTag(c) : `<div class="list-thumb placeholder"></div>`;
@@ -429,7 +431,7 @@ function trackRow(it: Item): string {
       <span class="list-meta">${code}${lang}${owner}${note}</span>
     </div>
     <div class="list-actions">
-      <wa-button class="track-edit" size="small" appearance="outlined">Éditer</wa-button>
+      <wa-button class="track-edit" size="small" appearance="outlined">${t("action.edit")}</wa-button>
       <wa-button class="track-del" size="small" appearance="outlined" variant="danger">×</wa-button>
     </div>
   </div>`;
@@ -455,11 +457,11 @@ async function renderTracking() {
       ${
         list.length
           ? `<div class="card-list">${list.map(trackRow).join("")}</div>`
-          : `<p class="muted">Aucune carte.</p>`
+          : `<p class="muted">${t("tracking.none")}</p>`
       }
     </section>`;
 
-  host.innerHTML = section("Commandées", "🛒", ordered) + section("Wishlist", "❤", wishlist);
+  host.innerHTML = section(t("tracking.ordered"), "🛒", ordered) + section(t("tracking.wishlist"), "❤", wishlist);
 
   [...ordered, ...wishlist].forEach((it) => {
     const el = host.querySelector(`.track-row[data-id="${it.id}"]`);
@@ -479,6 +481,12 @@ async function renderTracking() {
 }
 
 // ---------- statistiques tab ----------
+
+// The backend returns family group names in French; map them to the UI language.
+function familyI18n(frLabel: string): string {
+  const fam = FAMILIES.find((f) => f.label === frLabel);
+  return fam ? t("family." + fam.value) : frLabel;
+}
 
 function statCard(label: string, value: string | number, sub = ""): string {
   return `
@@ -537,7 +545,7 @@ async function renderStats() {
       const done = (b.total ?? 0) > 0 && (b.owned ?? 0) >= (b.total ?? 0);
       return `
       <div class="stat-row">
-        <span class="stat-label">${esc(b.label)}</span>
+        <span class="stat-label">${esc(familyI18n(b.label))}</span>
         <span class="stat-val">${b.owned ?? 0}/${b.total ?? 0} · ${p}%</span>
       </div>
       <div class="progress"><div class="progress-bar${done ? " done" : ""}" style="width:${p}%"></div></div>`;
@@ -548,7 +556,7 @@ async function renderStats() {
     ? byOwner
         .map(
           (b) => `<div class="stat-row"><span class="stat-label">${esc(b.label)}</span>
-            <span class="stat-val">${b.owned} cartes · ${b.copies} ex.</span></div>`,
+            <span class="stat-val">${t("stats.ownerRow", { owned: b.owned ?? 0, copies: b.copies ?? 0 })}</span></div>`,
         )
         .join("")
     : empty;
@@ -557,7 +565,7 @@ async function renderStats() {
     ? byLanguage
         .map(
           (b) => `<div class="stat-row"><span class="stat-label">${langLabel(b.label)}</span>
-            <span class="stat-val">${b.copies} ex.</span></div>`,
+            <span class="stat-val">${t("stats.copiesShort", { copies: b.copies ?? 0 })}</span></div>`,
         )
         .join("")
     : empty;
@@ -571,23 +579,23 @@ async function renderStats() {
         .join("")
     : empty;
 
-  const goalLabel = COLLECTION_GOALS.find((g) => g.value === s.goal)?.label ?? s.goal;
+  const goalLabel = t("goal." + s.goal);
   host.innerHTML = `
     <div class="stat-goal">
-      <span class="muted">Complétion selon l'objectif :</span>
+      <span class="muted">${t("stats.completionByGoal")}</span>
       <wa-badge variant="brand" pill>${esc(goalLabel)}</wa-badge>
-      <span class="muted small">(les répartitions ci-dessous couvrent toute la collection)</span>
+      <span class="muted small">${t("stats.breakdownNote")}</span>
     </div>
     <div class="stat-cards">
-      ${statCard("Cartes possédées", s.owned)}
-      ${statCard("Exemplaires", s.copies)}
-      ${statCard("Complétion catalogue", `${pct}%`, `${s.goalOwned} / ${s.catalogueTotal}`)}
-      ${statCard("Sets complétés", `${s.setsComplete} / ${s.setsTotal}`)}
+      ${statCard(t("stats.cardsOwned"), s.owned)}
+      ${statCard(t("stats.copies"), s.copies)}
+      ${statCard(t("stats.catalogueCompletion"), `${pct}%`, `${s.goalOwned} / ${s.catalogueTotal}`)}
+      ${statCard(t("stats.setsCompleted"), `${s.setsComplete} / ${s.setsTotal}`)}
     </div>
-    ${statSection("Par famille", groups)}
-    ${statSection("Par propriétaire", owners)}
-    ${statSection("Par langue", langs)}
-    ${statSection("Par rareté", rarities)}`;
+    ${statSection(t("stats.byFamily"), groups)}
+    ${statSection(t("stats.byOwner"), owners)}
+    ${statSection(t("stats.byLanguage"), langs)}
+    ${statSection(t("stats.byRarity"), rarities)}`;
 }
 
 // ---------- collection tab (browse by set, OP.TCG-style) ----------
@@ -599,12 +607,12 @@ let batchEdit = false; // list-only: select owned cards, then change their langu
 
 // Set-detail display options (persisted in localStorage).
 type OwnFilter = "all" | "owned" | "ordered" | "wishlist" | "missing";
-const OWN_FILTERS: { value: OwnFilter; label: string }[] = [
-  { value: "all", label: "Toutes" },
-  { value: "owned", label: "Possédées" },
-  { value: "ordered", label: "Commandées" },
-  { value: "wishlist", label: "Wishlist" },
-  { value: "missing", label: "Manquantes" },
+const OWN_FILTERS: { value: OwnFilter }[] = [
+  { value: "all" },
+  { value: "owned" },
+  { value: "ordered" },
+  { value: "wishlist" },
+  { value: "missing" },
 ];
 let ownFilter: OwnFilter = ((): OwnFilter => {
   const v = localStorage.getItem("ownFilter") as OwnFilter | null;
@@ -705,7 +713,7 @@ async function renderSetsOverview() {
     return;
   }
   if (sets.length === 0) {
-    host.innerHTML = `<wa-callout class="span">Catalogue vide. Va dans <strong>Préférences</strong> et synchronise le catalogue.</wa-callout>`;
+    host.innerHTML = `<wa-callout class="span">${t("collection.emptyCatalogue")}</wa-callout>`;
     return;
   }
   // Sets arrive already ordered by family (OP, EB, PRB, ST, then others). Each
@@ -726,7 +734,7 @@ async function renderSetsOverview() {
       html += `<div class="set-section${inGoal ? "" : " off-goal"}">
         <div class="set-group-head">
           ${inGoal ? ring(pct) : ""}
-          <span class="set-group-title">${esc(s.group)}</span>
+          <span class="set-group-title">${esc(t("family." + s.family))}</span>
           <span class="set-group-count muted">${owned}/${total}</span>
         </div>
         <div class="set-section-list">`;
@@ -799,16 +807,16 @@ async function renderSetDetail(code: string) {
   const pct = detail.total ? Math.round((detail.owned / detail.total) * 100) : 0;
   host.innerHTML = `
     <div class="set-detail-head">
-      <wa-button id="set-back" appearance="outlined" size="small">← Sets</wa-button>
+      <wa-button id="set-back" appearance="outlined" size="small">${t("common.backToSets")}</wa-button>
       <div class="set-detail-title">
         <strong>${esc(code)}</strong> ${esc(detail.name || "")}
         <span class="muted small" id="set-progress">· ${detail.owned}/${detail.total} (${pct}%)</span>
       </div>
       <div class="set-display-options">
-        <button type="button" id="batch-mode" class="icon-toggle batch-toggle${batchAdd ? " active" : ""}" title="Ajout par lot" aria-label="Ajout par lot" aria-pressed="${batchAdd}"><wa-icon library="fa" name="list-check"></wa-icon></button>
-        <button type="button" id="bulk-edit" class="icon-toggle bulk-edit-toggle${batchEdit ? " active" : ""}" title="Édition groupée (langue)" aria-label="Édition groupée" aria-pressed="${batchEdit}"><wa-icon library="fa" name="pen-to-square"></wa-icon></button>
-        <button type="button" id="filters-toggle" class="icon-toggle${showFilters ? " active" : ""}" title="Filtres" aria-label="Afficher/masquer les filtres" aria-pressed="${showFilters}"><wa-icon library="fa" name="filter"></wa-icon></button>
-        <button type="button" id="par-end" class="icon-toggle${parallelsAtEnd ? " active" : ""}" title="Parallèles à la fin" aria-label="Parallèles à la fin" aria-pressed="${parallelsAtEnd}"><wa-icon library="fa" name="layer-group"></wa-icon></button>
+        <button type="button" id="batch-mode" class="icon-toggle batch-toggle${batchAdd ? " active" : ""}" title="${t("toolbar.batchAdd")}" aria-label="${t("toolbar.batchAdd")}" aria-pressed="${batchAdd}"><wa-icon library="fa" name="list-check"></wa-icon></button>
+        <button type="button" id="bulk-edit" class="icon-toggle bulk-edit-toggle${batchEdit ? " active" : ""}" title="${t("toolbar.bulkEdit")}" aria-label="${t("toolbar.bulkEdit")}" aria-pressed="${batchEdit}"><wa-icon library="fa" name="pen-to-square"></wa-icon></button>
+        <button type="button" id="filters-toggle" class="icon-toggle${showFilters ? " active" : ""}" title="${t("toolbar.filters")}" aria-label="${t("toolbar.filters")}" aria-pressed="${showFilters}"><wa-icon library="fa" name="filter"></wa-icon></button>
+        <button type="button" id="par-end" class="icon-toggle${parallelsAtEnd ? " active" : ""}" title="${t("toolbar.parallelsLast")}" aria-label="${t("toolbar.parallelsLast")}" aria-pressed="${parallelsAtEnd}"><wa-icon library="fa" name="layer-group"></wa-icon></button>
         ${viewToggle()}
       </div>
     </div>
@@ -816,18 +824,18 @@ async function renderSetDetail(code: string) {
       ${
         state.owners.length
           ? `<wa-select id="set-owner" value="${setOwner}" size="small" style="min-width:150px">
-        <wa-option value="0"${setOwner === 0 ? " selected" : ""}>Tous propriétaires</wa-option>
+        <wa-option value="0"${setOwner === 0 ? " selected" : ""}>${t("filters.allOwners")}</wa-option>
         ${state.owners.map((o) => `<wa-option value="${o.id}"${o.id === setOwner ? " selected" : ""}>${esc(o.name)}</wa-option>`).join("")}
       </wa-select>`
           : ""
       }
       <wa-select id="own-filter" value="${ownFilter}" size="small" style="min-width:140px">
         ${OWN_FILTERS.map(
-          (f) => `<wa-option value="${f.value}"${ownFilter === f.value ? " selected" : ""}>${f.label}</wa-option>`,
+          (f) => `<wa-option value="${f.value}"${ownFilter === f.value ? " selected" : ""}>${t("filter." + f.value)}</wa-option>`,
         ).join("")}
       </wa-select>
       <label class="set-toggle">
-        <input type="checkbox" id="goal-only"${goalOnly ? " checked" : ""}/> Objectif seulement
+        <input type="checkbox" id="goal-only"${goalOnly ? " checked" : ""}/> ${t("filters.goalOnly")}
       </label>
     </div>
     <div class="progress big"><div class="progress-bar" id="set-bar" style="width:${pct}%"></div></div>
@@ -942,7 +950,7 @@ function paintSetGrid(detail: SetDetail) {
       );
     grid.innerHTML = rows.length
       ? rows.join("")
-      : `<wa-callout class="span">Aucun exemplaire à éditer ici.</wa-callout>`;
+      : `<wa-callout class="span">${t("bulk.nothingToEdit")}</wa-callout>`;
     wireEditRows();
     return;
   }
@@ -1000,12 +1008,12 @@ async function renderMissing() {
   }
   host.innerHTML = `
     <div class="set-detail-head">
-      <div class="set-detail-title"><strong>Cartes manquantes</strong></div>
+      <div class="set-detail-title"><strong>${t("missing.title")}</strong></div>
       <div class="set-display-options">${viewToggle()}</div>
     </div>
     <div class="set-filters">
       <label class="set-toggle">
-        <input type="checkbox" id="miss-goal-only"${missingGoalOnly ? " checked" : ""}/> Objectif seulement
+        <input type="checkbox" id="miss-goal-only"${missingGoalOnly ? " checked" : ""}/> ${t("filters.goalOnly")}
       </label>
     </div>
     <div id="missing"></div>`;
@@ -1031,7 +1039,7 @@ function paintMissing() {
     .filter((g) => g.cards.length > 0);
 
   if (groups.length === 0) {
-    container.innerHTML = `<wa-callout class="span">Aucune carte manquante 🎉</wa-callout>`;
+    container.innerHTML = `<wa-callout class="span">${t("missing.empty")}</wa-callout>`;
   } else {
     container.innerHTML = groups
       .map(
@@ -1168,8 +1176,8 @@ function setBatchRow(c: SetCard): string {
       <wa-select class="owner" value="" style="min-width:120px">${ownerOptions(null)}</wa-select>
       <wa-select class="lang" value="EN" style="width:104px">${langOptions("EN")}</wa-select>
       <wa-input class="qty-in" type="number" min="1" value="1" style="width:64px"></wa-input>
-      <wa-input class="note-in" placeholder="Commentaire" size="small" style="min-width:140px"></wa-input>
-      <label class="batch-check" title="Sélectionner"><input type="checkbox" class="batch-cb"/></label>
+      <wa-input class="note-in" placeholder="${t("common.comment")}" size="small" style="min-width:140px"></wa-input>
+      <label class="batch-check" title="${t("common.select")}"><input type="checkbox" class="batch-cb"/></label>
     </div>
   </div>`;
 }
@@ -1211,7 +1219,7 @@ function paintBatchBar(active: boolean, global: boolean) {
           : ""
       }
       <wa-button id="batch-add" variant="brand" size="small" disabled>
-        <wa-icon library="fa" name="plus" slot="start"></wa-icon><span id="batch-add-label">Ajouter la sélection (0)</span>
+        <wa-icon library="fa" name="plus" slot="start"></wa-icon><span id="batch-add-label">${t("batch.addSelection", { n: 0 })}</span>
       </wa-button>
     </div>`;
   bar.querySelector("#batch-add")?.addEventListener("click", () => runBatchAdd(global));
@@ -1233,7 +1241,7 @@ function updateBatchCount() {
   const n = grid.querySelectorAll(".batch-cb:checked").length;
   btn.disabled = n === 0;
   const label = document.querySelector("#batch-add-label");
-  if (label) label.textContent = `Ajouter la sélection (${n})`;
+  if (label) label.textContent = t("batch.addSelection", { n });
 }
 
 async function runBatchAdd(global: boolean) {
@@ -1269,7 +1277,7 @@ async function runBatchAdd(global: boolean) {
 
   try {
     const added = await api.addItemsBatch(items);
-    toast(`${added.length} carte(s) ajoutée(s)`);
+    toast(t("batch.added", { n: added.length }));
   } catch (e) {
     toast((e as Error).message, "danger");
     if (btn) {
@@ -1287,7 +1295,7 @@ async function runBatchAdd(global: boolean) {
 // One possession as a selectable row: owner + language + quantity, so a single
 // copy can be re-languaged (e.g. only Milo's OP16-001).
 function editItemRow(c: SetCard, it: Item): string {
-  const owner = it.ownerName ? esc(it.ownerName) : "Non attribué";
+  const owner = it.ownerName ? esc(it.ownerName) : t("common.unassigned");
   return `
   <div class="list-row edit-row owned" data-item="${it.id}">
     ${thumbTag(c, false)}
@@ -1296,7 +1304,7 @@ function editItemRow(c: SetCard, it: Item): string {
       <span class="list-name" title="${esc(c.name)}">${esc(c.name)}</span>
     </div>
     <div class="list-meta">${langLabel(it.language)} · ×${it.quantity} · ${owner}</div>
-    <label class="batch-check" title="Sélectionner"><input type="checkbox" class="edit-cb" value="${it.id}"/></label>
+    <label class="batch-check" title="${t("common.select")}"><input type="checkbox" class="edit-cb" value="${it.id}"/></label>
   </div>`;
 }
 
@@ -1305,10 +1313,10 @@ function paintBulkEditBar(active: boolean) {
   if (!bar || !active) return;
   bar.innerHTML = `
     <div class="batch-bar">
-      <span class="muted small">Nouvelle langue :</span>
+      <span class="muted small">${t("bulk.newLanguage")}</span>
       <wa-select id="edit-lang" value="EN" size="small" style="width:110px">${langOptions("EN")}</wa-select>
       <wa-button id="edit-apply" variant="brand" size="small" disabled>
-        <wa-icon library="fa" name="pen-to-square" slot="start"></wa-icon><span id="edit-apply-label">Changer la langue (0)</span>
+        <wa-icon library="fa" name="pen-to-square" slot="start"></wa-icon><span id="edit-apply-label">${t("bulk.changeLanguage", { n: 0 })}</span>
       </wa-button>
     </div>`;
   bar.querySelector("#edit-apply")?.addEventListener("click", () => runBulkEdit());
@@ -1330,7 +1338,7 @@ function updateEditCount() {
   const n = grid.querySelectorAll(".edit-cb:checked").length;
   btn.disabled = n === 0;
   const label = document.querySelector("#edit-apply-label");
-  if (label) label.textContent = `Changer la langue (${n})`;
+  if (label) label.textContent = t("bulk.changeLanguage", { n });
 }
 
 async function runBulkEdit() {
@@ -1348,7 +1356,7 @@ async function runBulkEdit() {
   }
   try {
     const res = await api.bulkSetItemLanguage(itemIds, language);
-    toast(`${res.updated} exemplaire(s) mis en ${language}`);
+    toast(t("bulk.done", { n: res.updated, lang: language }));
   } catch (e) {
     toast((e as Error).message, "danger");
     if (btn) {
@@ -1459,7 +1467,7 @@ function openCardDialog(c: SetCard) {
       <div class="poss-row" data-id="${it.id}">
         <span>${possessionLine(it)}</span>
         <span class="poss-actions">
-          <wa-button class="poss-edit" size="small" appearance="outlined">Éditer</wa-button>
+          <wa-button class="poss-edit" size="small" appearance="outlined">${t("action.edit")}</wa-button>
           <wa-button class="poss-del" size="small" appearance="outlined" variant="danger">×</wa-button>
         </span>
       </div>`,
@@ -1478,32 +1486,32 @@ function openCardDialog(c: SetCard) {
   dlg.innerHTML = `
     ${img}
     ${anyOwned ? `<div class="poss-list">${possessions}</div><hr class="poss-sep"/>` : ""}
-    <wa-details class="add-details" summary="${anyOwned ? "Ajouter un exemplaire" : "Ajouter / suivre cette carte"}">
+    <wa-details class="add-details" summary="${anyOwned ? t("dialog.addCopy") : t("dialog.addOrTrack")}">
       <div class="form">
         <div class="field-row">
           <div class="field">
-            <span class="field-label">Statut</span>
-            ${segmentedControl("status", STATUS_SEG, "owned")}
+            <span class="field-label">${t("common.status")}</span>
+            ${segmentedControl("status", statusSeg(), "owned")}
           </div>
           <div class="field f-lang-only">
-            <span class="field-label">Langue</span>
+            <span class="field-label">${t("common.language")}</span>
             ${segmentedControl("lang", LANG_SEG, "EN")}
           </div>
         </div>
         <div class="field-row">
-          <label class="field field-grow">Propriétaire
+          <label class="field field-grow">${t("common.owner")}
             <wa-select class="f-owner" value="">${ownerOptions(null)}</wa-select>
           </label>
-          <label class="field f-owned-only">Quantité
+          <label class="field f-owned-only">${t("common.quantity")}
             <wa-input class="f-qty" type="number" min="1" value="1" style="width:5.5rem"></wa-input>
           </label>
         </div>
-        <label>Commentaire
+        <label>${t("common.comment")}
           <wa-textarea class="f-notes" rows="2"></wa-textarea>
         </label>
         <div class="add-actions">
-          <wa-button class="f-cancel" appearance="outlined">Fermer</wa-button>
-          <wa-button class="f-add" variant="brand">Ajouter</wa-button>
+          <wa-button class="f-cancel" appearance="outlined">${t("action.close")}</wa-button>
+          <wa-button class="f-add" variant="brand">${t("action.add")}</wa-button>
         </div>
       </div>
     </wa-details>`;
@@ -1539,8 +1547,7 @@ function openCardDialog(c: SetCard) {
       cardItemsUpsert(c.cardId, item);
       close();
       refreshCardInPlace(c.cardId);
-      const label = STATUSES.find((s) => s.value === status)?.label ?? "Ajouté";
-      toast(`${label} : ${c.name}`);
+      toast(t("toast.added", { status: t("status." + status), name: c.name }));
     } catch (e) {
       toast((e as Error).message, "danger");
     }
@@ -1568,33 +1575,33 @@ function openCardDialog(c: SetCard) {
 function openEditDialog(it: Item, opts?: { onSaved?: () => void }) {
   const dlg = document.createElement("wa-dialog");
   dlg.classList.add("card-dialog");
-  dlg.setAttribute("label", `Éditer — ${it.card?.name ?? ""}`);
+  dlg.setAttribute("label", t("dialog.editTitle", { name: it.card?.name ?? "" }));
   dlg.innerHTML = `
     <div class="form">
       <div class="field-row">
         <div class="field">
-          <span class="field-label">Statut</span>
-          ${segmentedControl("status", STATUS_SEG, it.status || "owned")}
+          <span class="field-label">${t("common.status")}</span>
+          ${segmentedControl("status", statusSeg(), it.status || "owned")}
         </div>
         <div class="field f-lang-only">
-          <span class="field-label">Langue</span>
+          <span class="field-label">${t("common.language")}</span>
           ${segmentedControl("lang", LANG_SEG, it.language || "EN")}
         </div>
       </div>
       <div class="field-row">
-        <label class="field field-grow">Propriétaire
+        <label class="field field-grow">${t("common.owner")}
           <wa-select class="f-owner" value="${it.ownerId ?? ""}">${ownerOptions(it.ownerId)}</wa-select>
         </label>
-        <label class="field f-owned-only">Quantité
+        <label class="field f-owned-only">${t("common.quantity")}
           <wa-input class="f-qty" type="number" min="1" value="${it.quantity}" style="width:5.5rem"></wa-input>
         </label>
       </div>
-      <label>Commentaire
+      <label>${t("common.comment")}
         <wa-textarea class="f-notes" rows="2">${esc(it.notes)}</wa-textarea>
       </label>
     </div>
-    <wa-button slot="footer" class="f-cancel" appearance="outlined">Annuler</wa-button>
-    <wa-button slot="footer" class="f-save" variant="brand">Enregistrer</wa-button>`;
+    <wa-button slot="footer" class="f-cancel" appearance="outlined">${t("action.cancel")}</wa-button>
+    <wa-button slot="footer" class="f-save" variant="brand">${t("action.save")}</wa-button>`;
   document.body.appendChild(dlg);
   (dlg as any).open = true;
 
@@ -1651,14 +1658,14 @@ function renderSearch() {
   const host = document.querySelector<HTMLDivElement>("#search")!;
   const emptyWarn =
     state.cardCount === 0
-      ? `<wa-callout variant="warning" class="span">Le catalogue est vide. Va dans <strong>Préférences → Catalogue</strong> et clique sur <em>Synchroniser</em> pour le télécharger une fois (ensuite la recherche est instantanée et hors-ligne).</wa-callout>`
+      ? `<wa-callout variant="warning" class="span">${t("search.emptyCatalogueWarn")}</wa-callout>`
       : "";
   host.innerHTML = `
     ${emptyWarn}
-    <p class="muted small">Recherche dans le catalogue local (${state.cardCount} cartes) — aucun appel API, aucun quota consommé. Laisse le champ vide pour tout parcourir.</p>
+    <p class="muted small">${t("search.hint", { n: state.cardCount })}</p>
     <div class="toolbar">
-      <wa-input id="s-name" placeholder="Nom ou code, ex. Luffy / OP01-001" style="flex:1"></wa-input>
-      <wa-button id="s-go" variant="brand">Rechercher</wa-button>
+      <wa-input id="s-name" placeholder="${t("search.placeholder")}" style="flex:1"></wa-input>
+      <wa-button id="s-go" variant="brand">${t("search.button")}</wa-button>
       ${viewToggle()}
     </div>
     <div id="s-results" class="grid"></div>`;
@@ -1697,7 +1704,7 @@ function paintSearchResults() {
   setSearchContext();
   if (lastSearch.length === 0) {
     results.className = "grid";
-    results.innerHTML = `<wa-callout class="span">Aucune carte trouvée.</wa-callout>`;
+    results.innerHTML = `<wa-callout class="span">${t("search.none")}</wa-callout>`;
     return;
   }
   const listView = viewMode === "list";
@@ -1726,74 +1733,72 @@ function setSearchContext() {
 function renderPrefs() {
   const host = document.querySelector<HTMLDivElement>("#prefs")!;
   host.innerHTML = `
-    <h2>Objectif de collection</h2>
-    <p class="muted">Définit quelles cartes comptent dans la progression affichée sur la page
-    « Ma collection ». La grille montre toujours toutes les cartes ; seuls les compteurs changent.</p>
-    <wa-select id="goal-select" value="${state.goal}" style="max-width:420px">
-      ${COLLECTION_GOALS.map(
-        (g) =>
-          `<wa-option value="${g.value}"${g.value === state.goal ? " selected" : ""}>${esc(g.label)} — ${esc(g.desc)}</wa-option>`,
+    <h2>${t("prefs.langTitle")}</h2>
+    <wa-select id="lang-select" value="${getLang()}" style="max-width:420px">
+      ${LANGS.map(
+        (l) => `<wa-option value="${l.value}"${l.value === getLang() ? " selected" : ""}>${esc(l.label)}</wa-option>`,
       ).join("")}
     </wa-select>
 
-    <p class="muted" style="margin-top:1rem">Familles de sets à inclure dans l'objectif (aperçu collection &amp; statistiques) :</p>
+    <h2 style="margin-top:2rem">${t("prefs.goalTitle")}</h2>
+    <p class="muted">${t("prefs.goalDesc")}</p>
+    <wa-select id="goal-select" value="${state.goal}" style="max-width:420px">
+      ${COLLECTION_GOALS.map(
+        (g) =>
+          `<wa-option value="${g.value}"${g.value === state.goal ? " selected" : ""}>${esc(t("goal." + g.value))} — ${esc(t("goal." + g.value + ".desc"))}</wa-option>`,
+      ).join("")}
+    </wa-select>
+
+    <p class="muted" style="margin-top:1rem">${t("prefs.families")}</p>
     <div class="family-list">
       ${FAMILIES.map(
         (f) =>
-          `<label class="set-toggle"><input type="checkbox" class="family-cb" value="${f.value}"${state.families.includes(f.value) ? " checked" : ""}/> ${esc(f.label)}</label>`,
+          `<label class="set-toggle"><input type="checkbox" class="family-cb" value="${f.value}"${state.families.includes(f.value) ? " checked" : ""}/> ${esc(t("family." + f.value))}</label>`,
       ).join("")}
     </div>
 
-    <h2 style="margin-top:2rem">Catalogue One Piece</h2>
-    <p class="muted">La recherche lit un catalogue local (aucune connexion, instantané).
-    Une synchronisation récupère tout le catalogue depuis le site officiel One Piece
-    (tous les sets) ; ça prend ~30 s. À relancer de temps en temps quand de
-    nouvelles séries sortent.</p>
+    <h2 style="margin-top:2rem">${t("prefs.catalogueTitle")}</h2>
+    <p class="muted">${t("prefs.catalogueDesc")}</p>
     <div id="catalogue"></div>
 
-    <h2 style="margin-top:2rem">Ajouter une carte manquante</h2>
-    <p class="muted">Certaines promos (arts alternatifs, Tin Pack Set…) ne figurent pas dans la base
-    officielle One Piece et n'apparaissent donc pas. Colle l'URL TCGplayer du produit pour l'ajouter
-    au catalogue (immédiat, sans resynchronisation).</p>
+    <h2 style="margin-top:2rem">${t("prefs.addMissingTitle")}</h2>
+    <p class="muted">${t("prefs.addMissingDesc")}</p>
     <div class="toolbar">
       <wa-input id="curated-url" placeholder="https://www.tcgplayer.com/product/…" style="flex:1"></wa-input>
-      <wa-button id="curated-add" variant="brand">Ajouter</wa-button>
+      <wa-button id="curated-add" variant="brand">${t("action.add")}</wa-button>
     </div>
-    <wa-details class="curated-manual" summary="Saisie manuelle (carte hors TCGplayer, ex. Cardmarket)">
-      <p class="muted small">Pour une carte absente de TCGplayer. Le <strong>code</strong> détermine le set
-      (ex. <code>OP08-043</code> → un parallèle si le code existe déjà, <code>P</code> pour une promo).
-      L'image est optionnelle (URL directe d'une image).</p>
+    <wa-details class="curated-manual" summary="${t("prefs.manualSummary")}">
+      <p class="muted small">${t("prefs.manualDesc")}</p>
       <div class="form">
         <div class="field-row">
-          <label class="field field-grow">Nom
+          <label class="field field-grow">${t("common.name")}
             <wa-input id="m-name" placeholder="Edward.Newgate"></wa-input>
           </label>
-          <label class="field">Code
+          <label class="field">${t("common.code")}
             <wa-input id="m-code" placeholder="OP08-043" style="width:9rem"></wa-input>
           </label>
-          <label class="field">Rareté
+          <label class="field">${t("common.rarity")}
             <wa-input id="m-rarity" placeholder="PR" style="width:6rem"></wa-input>
           </label>
         </div>
-        <label>URL de l'image (optionnel)
+        <label>${t("prefs.imageUrl")}
           <wa-input id="m-image" placeholder="https://…/image.jpg"></wa-input>
         </label>
-        <label>URL source (optionnel, ex. Cardmarket)
+        <label>${t("prefs.sourceUrl")}
           <wa-input id="m-source" placeholder="https://www.cardmarket.com/…"></wa-input>
         </label>
         <div class="add-actions">
-          <wa-button id="curated-add-manual" variant="brand">Ajouter</wa-button>
+          <wa-button id="curated-add-manual" variant="brand">${t("action.add")}</wa-button>
         </div>
       </div>
     </wa-details>
     <div id="curated-list" class="owner-list"></div>
 
-    <h2 style="margin-top:2rem">Co-propriétaires de la collection</h2>
-    <p class="muted">Les noms ajoutés ici sont proposés dans le menu déroulant « Propriétaire » de chaque carte.
-    Supprimer un propriétaire ne supprime pas ses cartes : elles repassent simplement en « Non attribué ».</p>
+    <h2 style="margin-top:2rem">${t("prefs.coOwnersTitle")}</h2>
+    <p class="muted">${t("prefs.coOwnersDesc")}</p>
     <div class="toolbar">
-      <wa-input id="owner-name" placeholder="Nom (ex. Pierre)" style="flex:1"></wa-input>
-      <wa-button id="owner-add" variant="brand">Ajouter</wa-button>
+      <wa-input id="owner-name" placeholder="${t("prefs.ownerPlaceholder")}" style="flex:1"></wa-input>
+      <wa-button id="owner-add" variant="brand">${t("action.add")}</wa-button>
     </div>
     <div id="owner-list" class="owner-list"></div>`;
 
@@ -1813,14 +1818,19 @@ function renderPrefs() {
   host.querySelector("#owner-name")?.addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") add();
   });
+  host.querySelector("#lang-select")?.addEventListener("change", (e) => {
+    const v = (e.target as any).value as Lang;
+    if (v === getLang()) return;
+    setLang(v);
+    renderShell(); // re-render everything in the new language
+  });
   host.querySelector("#goal-select")?.addEventListener("change", async (e) => {
     const v = (e.target as any).value as CollectionGoal;
     if (!GOAL_VALUES.includes(v) || v === state.goal) return;
     try {
       const s = await api.updateSettings({ collectionGoal: v });
       state.goal = s.collectionGoal;
-      const label = COLLECTION_GOALS.find((g) => g.value === state.goal)?.label ?? state.goal;
-      toast(`Objectif : ${label}`);
+      toast(t("toast.goalSet", { label: t("goal." + state.goal) }));
       // Collection progression depends on the goal — refresh it (if mounted).
       if (colSet) renderSetDetail(colSet);
       else renderSetsOverview();
@@ -1854,7 +1864,7 @@ function renderPrefs() {
     try {
       const c = await api.addCurated(payload);
       onOk();
-      toast(`Ajoutée : ${c.code} — ${c.name}`);
+      toast(t("toast.cardAdded", { code: c.code, name: c.name }));
       await renderCuratedList();
       // The catalogue changed — refresh the collection view.
       if (colSet) renderSetDetail(colSet);
@@ -1876,7 +1886,7 @@ function renderPrefs() {
     const name = val("#m-name");
     const code = val("#m-code");
     if (!name || !code) {
-      toast("Nom et code requis", "danger");
+      toast(t("toast.nameCodeRequired"), "danger");
       return;
     }
     submitCurated(
@@ -1929,7 +1939,7 @@ async function renderCuratedList() {
     return;
   }
   if (!cards.length) {
-    list.innerHTML = `<wa-callout>Aucune carte ajoutée manuellement.</wa-callout>`;
+    list.innerHTML = `<wa-callout>${t("prefs.noCurated")}</wa-callout>`;
     return;
   }
   list.innerHTML = cards
@@ -1951,7 +1961,7 @@ async function renderCuratedList() {
         </span>
         <span class="curated-actions">
           ${badge}
-          <wa-button class="curated-del" size="small" appearance="outlined" variant="danger">Supprimer</wa-button>
+          <wa-button class="curated-del" size="small" appearance="outlined" variant="danger">${t("action.delete")}</wa-button>
         </span>
       </div>`;
     })
@@ -1975,7 +1985,7 @@ async function renderCuratedList() {
 // ---------- catalogue sync ----------
 
 function fmtDate(iso: string): string {
-  if (!iso) return "jamais";
+  if (!iso) return t("sync.never");
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleString("fr-FR");
 }
@@ -1993,17 +2003,17 @@ async function renderCatalogue() {
   state.cardCount = status.cardCount;
 
   const errWarn = status.error
-    ? `<wa-callout variant="danger">Dernière synchro en échec : ${esc(status.error)}</wa-callout>`
+    ? `<wa-callout variant="danger">${esc(t("sync.failed", { msg: status.error }))}</wa-callout>`
     : "";
   host.innerHTML = `
     ${errWarn}
     <div class="catalogue-row">
       <div>
-        <div><strong>${status.cardCount}</strong> cartes en cache</div>
-        <div class="muted small">Dernière synchro : ${fmtDate(status.lastSync)}</div>
+        <div>${t("sync.cached", { n: `<strong>${status.cardCount}</strong>` })}</div>
+        <div class="muted small">${esc(t("sync.last", { date: fmtDate(status.lastSync) }))}</div>
       </div>
       <wa-button id="sync-btn" variant="brand"${status.syncing ? " loading disabled" : ""}>
-        ${status.syncing ? "Synchronisation…" : "Synchroniser le catalogue"}
+        ${status.syncing ? t("sync.syncing") : t("sync.button")}
       </wa-button>
     </div>`;
 
@@ -2019,7 +2029,7 @@ function showSyncBanner() {
   const el = document.createElement("div");
   el.id = "sync-banner";
   el.className = "sync-banner";
-  el.innerHTML = `<wa-spinner></wa-spinner><span>Synchronisation de la base de données…</span>`;
+  el.innerHTML = `<wa-spinner></wa-spinner><span>${t("sync.banner")}</span>`;
   document.body.appendChild(el);
 }
 function hideSyncBanner() {
@@ -2039,7 +2049,7 @@ async function pollSync() {
       if (!st.syncing) {
         state.cardCount = st.cardCount;
         if (st.error) toast(`Échec de la synchro : ${st.error}`, "danger");
-        else toast(`Catalogue synchronisé : ${st.cardCount} cartes`);
+        else toast(t("sync.done", { n: st.cardCount }));
         renderCatalogue();
         renderSearch();
         return;
@@ -2058,7 +2068,7 @@ async function syncCatalogue() {
   if (btn) {
     (btn as any).loading = true;
     (btn as any).disabled = true;
-    btn.textContent = "Synchronisation… (récupère tous les sets, ~30s)";
+    btn.textContent = t("sync.progress");
   }
   try {
     await api.runSync(); // 202 — runs in the background
@@ -2073,7 +2083,7 @@ function renderOwnerList() {
   const list = document.querySelector<HTMLDivElement>("#owner-list");
   if (!list) return;
   if (state.owners.length === 0) {
-    list.innerHTML = `<wa-callout>Aucun propriétaire pour l'instant.</wa-callout>`;
+    list.innerHTML = `<wa-callout>${t("prefs.noOwners")}</wa-callout>`;
     return;
   }
   list.innerHTML = state.owners
@@ -2081,7 +2091,7 @@ function renderOwnerList() {
       (o) => `
       <div class="owner-row" data-id="${o.id}">
         <span>${esc(o.name)}</span>
-        <wa-button class="owner-del" size="small" appearance="outlined" variant="danger">Supprimer</wa-button>
+        <wa-button class="owner-del" size="small" appearance="outlined" variant="danger">${t("action.delete")}</wa-button>
       </div>`,
     )
     .join("");
