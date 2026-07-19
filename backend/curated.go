@@ -127,71 +127,83 @@ func (s *server) handleListCurated(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// curatedReq is a request to add a curated card, in either mode (see buildCurated).
+type curatedReq struct {
+	URL       string `json:"url"`
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	Rarity    string `json:"rarity"`
+	ImageURL  string `json:"imageUrl"`
+	SourceURL string `json:"sourceUrl"`
+}
+
 // handleAddCurated adds a card the automated sources miss. Two modes:
 //   - {url}: a TCGplayer product URL/id — we look up number/name/rarity/image;
 //   - {code, name, rarity?, imageUrl?}: manual entry, for cards only on other
 //     sites (e.g. Cardmarket, which we can't scrape). The code decides the set;
 //     a parallel slot is picked if the code already exists.
 func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		URL       string `json:"url"`
-		Code      string `json:"code"`
-		Name      string `json:"name"`
-		Rarity    string `json:"rarity"`
-		ImageURL  string `json:"imageUrl"`
-		SourceURL string `json:"sourceUrl"`
-	}
+	var req curatedReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
 		return
 	}
+	c, err := s.buildCurated(r.Context(), req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.persistCurated(c); err != nil {
+		writeErr(w, http.StatusConflict, "ajout impossible (déjà présente ?): "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, curatedJSON(c))
+}
 
-	var c curatedCard
+// buildCurated resolves a curated card from a request (TCGplayer lookup or
+// manual entry), downloading its image where applicable. It does not persist.
+func (s *server) buildCurated(ctx context.Context, req curatedReq) (curatedCard, error) {
 	if strings.TrimSpace(req.Code) != "" || strings.TrimSpace(req.Name) != "" {
 		// Manual entry.
 		code := strings.ToUpper(strings.TrimSpace(req.Code))
 		name := strings.TrimSpace(req.Name)
 		if code == "" || name == "" {
-			writeErr(w, http.StatusBadRequest, "code et nom requis")
-			return
+			return curatedCard{}, fmt.Errorf("code et nom requis")
 		}
 		rarity := strings.TrimSpace(req.Rarity)
 		if rarity == "" {
 			rarity = "PR"
 		}
 		cardID := s.resolveCuratedID(code)
-		c = curatedCard{
+		c := curatedCard{
 			cardID:    cardID,
 			code:      code,
 			name:      name,
 			rarity:    rarity,
 			sourceURL: strings.TrimSpace(req.SourceURL),
 		}
-		// Download + downscale the image now and store it, so it's served from
-		// our own origin (the /api/img proxy only whitelists a few hosts, and
-		// the source may block hotlinking later). On failure, import anyway.
+		// Download + downscale the image now and store it locally (the /api/img
+		// proxy only whitelists a few hosts, and sources may block hotlinking
+		// later). On failure, import anyway.
 		if raw := strings.TrimSpace(req.ImageURL); raw != "" {
-			if blob, ferr := fetchAndThumb(r.Context(), raw); ferr == nil && len(blob) > 0 {
+			if blob, ferr := fetchAndThumb(ctx, raw); ferr == nil && len(blob) > 0 {
 				c.imageBlob = blob
 				c.imageURL = "/api/curated/" + cardID + "/image"
 			} else if ferr != nil {
 				log.Printf("curated image fetch failed (%s): %v", raw, ferr)
 			}
 		}
-		s.finishAddCurated(w, c)
-		return
+		return c, nil
 	}
 
 	// TCGplayer mode.
 	pid, ok := parseTCGProductID(req.URL)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "URL ou identifiant produit TCGplayer invalide")
-		return
+		return curatedCard{}, fmt.Errorf("URL ou identifiant produit TCGplayer invalide")
 	}
-	prod, err := fetchTCGProduct(r.Context(), pid)
+	prod, err := fetchTCGProduct(ctx, pid)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "TCGplayer: "+err.Error())
-		return
+		return curatedCard{}, fmt.Errorf("TCGplayer: %w", err)
 	}
 	// Most cards have an official number (e.g. "P-074") we group under. Some
 	// promos (sealed-battle, event leaders…) have none on TCGplayer — synthesize
@@ -211,15 +223,22 @@ func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(src, "://") {
 		src = fmt.Sprintf("https://www.tcgplayer.com/product/%d", prod.ProductID)
 	}
-	c = curatedCard{
+	return curatedCard{
 		cardID:    cardID,
 		code:      code,
 		name:      name,
 		rarity:    prod.Rarity,
 		productID: prod.ProductID,
 		sourceURL: src,
+	}, nil
+}
+
+// persistCurated saves a curated card and merges it into the live catalogue.
+func (s *server) persistCurated(c curatedCard) error {
+	if err := s.st.AddCuratedCard(c); err != nil {
+		return err
 	}
-	s.finishAddCurated(w, c)
+	return s.refreshCuratedExtra()
 }
 
 // fetchAndThumb downloads an image (browser-ish headers so hotlink-protected
@@ -265,19 +284,6 @@ func (s *server) handleCuratedImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=604800")
 	_, _ = w.Write(blob)
-}
-
-// finishAddCurated persists a curated card and merges it into the catalogue.
-func (s *server) finishAddCurated(w http.ResponseWriter, c curatedCard) {
-	if err := s.st.AddCuratedCard(c); err != nil {
-		writeErr(w, http.StatusConflict, "ajout impossible (déjà présente ?): "+err.Error())
-		return
-	}
-	if err := s.refreshCuratedExtra(); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, curatedJSON(c))
 }
 
 func (s *server) handleDeleteCurated(w http.ResponseWriter, r *http.Request) {

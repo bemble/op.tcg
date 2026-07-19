@@ -18,6 +18,7 @@ What it does (deliberately minimal):
 - **Add a missing card** by hand from a TCGplayer product URL (e.g. promo alt-arts the official list omits), in **Préférences**.
 - Co-owners are managed as a free-text list in **Préférences**, then picked from a dropdown per card.
 - **Installable** as a PWA (iOS/Android home-screen app, standalone, offline-capable shell).
+- **MCP server** at `/mcp` so an assistant can search, check completion and manage the collection (see below).
 
 No multi-game, no regions, no accounts.
 
@@ -61,6 +62,9 @@ All optional, via environment variables:
 | `WEB_DIR`         | `./web`                | Directory of the built SPA the server serves (Docker: `/app/web`). |
 | `IMAGE_WIDTH`     | `220`                  | Thumbnail width (px) for server-side image downscaling; 0 disables. |
 | `IMAGE_CACHE`     | `false`                | Persist processed images to disk (`IMAGE_CACHE_DIR`, default `./data/imgcache`). |
+| `MCP_ENABLED`     | `true`                 | Expose the MCP server at `/mcp`. |
+| `MCP_READ_ONLY`   | `false`                | Register only the read tools (no add/update/remove). |
+| `MCP_TOKEN`       | _(empty)_              | If set, `/mcp` requires `Authorization: Bearer <token>`. **Set this** if the app is reachable beyond your trusted network. |
 
 ## HTTP API
 
@@ -90,6 +94,17 @@ All optional, via environment variables:
 | `GET`    | `/api/curated`                | List hand-added cards.                                       |
 | `POST`   | `/api/curated`                | Add a card from a TCGplayer product URL/id. Body: `{ "url": "…" }`. |
 | `DELETE` | `/api/curated/{id}`           | Remove a curated card (by its catalogue id).                 |
+
+## MCP server
+
+An [MCP](https://modelcontextprotocol.io) server is exposed at **`/mcp`** (streamable HTTP), so an assistant can query and manage the collection with the same store/catalogue as the REST API. Enabled by default (`MCP_ENABLED`); protect it with `MCP_TOKEN` if it's reachable beyond a trusted network (the tools include writes).
+
+Tools:
+
+- **Read** — `search_cards`, `get_card`, `list_sets`, `get_set`, `missing_cards`, `collection_stats`, `list_owners`.
+- **Write** — `add_card` (owned/ordered/wishlist), `update_possession`, `remove_possession`, `set_language_bulk`, `add_owner`, `add_missing_card` (TCGplayer URL or manual entry).
+
+Set `MCP_READ_ONLY=true` to expose only the read tools. Point an HTTP MCP client at `https://<host>/mcp` with header `Authorization: Bearer <MCP_TOKEN>`.
 
 ## Data model
 

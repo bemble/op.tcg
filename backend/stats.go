@@ -78,10 +78,20 @@ type fullStats struct {
 // and DON gold show up even when the goal is "complete". Owned counts are
 // distinct cards; copies are summed quantities.
 func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
-	items, err := s.st.ListItems(0)
+	st, err := s.computeFullStats()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// computeFullStats builds the collection stats scoped to the active goal/families
+// (shared by the HTTP handler and the MCP server).
+func (s *server) computeFullStats() (fullStats, error) {
+	items, err := s.st.ListItems(0)
+	if err != nil {
+		return fullStats{}, err
 	}
 
 	goal := s.collectionGoal()
@@ -216,5 +226,5 @@ func (s *server) handleFullStats(w http.ResponseWriter, r *http.Request) {
 		return st.ByRarity[i].Owned > st.ByRarity[j].Owned
 	})
 
-	writeJSON(w, http.StatusOK, st)
+	return st, nil
 }

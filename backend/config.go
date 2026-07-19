@@ -22,6 +22,10 @@ type Config struct {
 	ImageCache    bool   // persist proxied (small) images to disk to avoid refetching
 	ImageCacheDir string // directory for the on-disk image cache
 	ImageWidth    int    // downscale proxied images to this width (px); 0 disables resizing
+
+	MCPEnabled  bool   // expose the MCP server at /mcp
+	MCPReadOnly bool   // only register read tools (no add/update/remove)
+	MCPToken    string // if set, /mcp requires Authorization: Bearer <token>
 }
 
 func loadConfig() Config {
@@ -42,6 +46,10 @@ func loadConfig() Config {
 		ImageCache:    envBool("IMAGE_CACHE", false),
 		ImageCacheDir: env("IMAGE_CACHE_DIR", "./data/imgcache"),
 		ImageWidth:    envInt("IMAGE_WIDTH", 220),
+
+		MCPEnabled:  envBool("MCP_ENABLED", true),
+		MCPReadOnly: envBool("MCP_READ_ONLY", false),
+		MCPToken:    strings.TrimSpace(os.Getenv("MCP_TOKEN")),
 	}
 }
 

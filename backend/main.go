@@ -117,6 +117,16 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/curated/{id}/image", s.handleCuratedImage)
 	mux.HandleFunc("DELETE /api/curated/{id}", s.handleDeleteCurated)
 
+	// MCP server (read + write tools) at /mcp, streamable HTTP.
+	if s.cfg.MCPEnabled {
+		h := s.mcpHandler()
+		mux.Handle("/mcp", h)
+		mux.Handle("/mcp/", h)
+		if s.cfg.MCPToken == "" {
+			log.Printf("WARNING: MCP enabled at /mcp with NO token (read+write open on this network) — set MCP_TOKEN")
+		}
+	}
+
 	// Any unmatched /api/* path returns a clean JSON 404 instead of falling
 	// through to the SPA handler (which would return HTML, or — with an empty
 	// web dir in dev — a misleading "frontend not built" error).
