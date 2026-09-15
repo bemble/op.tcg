@@ -31,6 +31,7 @@ const dict: Record<string, Entry> = {
   "action.cancel": { fr: "Annuler", en: "Cancel" },
   "action.save": { fr: "Enregistrer", en: "Save" },
   "action.edit": { fr: "Éditer", en: "Edit" },
+  "action.received": { fr: "Reçu", en: "Received" },
   "action.delete": { fr: "Supprimer", en: "Delete" },
   "common.noImage": { fr: "Pas d'image", en: "No image" },
   "common.unassigned": { fr: "Non attribué", en: "Unassigned" },
@@ -179,6 +180,7 @@ const dict: Record<string, Entry> = {
   "toast.nameCodeRequired": { fr: "Nom et code requis", en: "Name and code required" },
   "toast.cardAdded": { fr: "Ajoutée : {code} — {name}", en: "Added: {code} — {name}" },
   "toast.goalSet": { fr: "Objectif : {label}", en: "Goal: {label}" },
+  "toast.received": { fr: "Reçue : {name}", en: "Received: {name}" },
 
   // catalogue sync
   "sync.cached": { fr: "{n} cartes en cache", en: "{n} cards cached" },

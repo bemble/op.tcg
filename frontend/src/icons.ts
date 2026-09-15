@@ -16,6 +16,7 @@ import layerGroup from "@fortawesome/fontawesome-free/svgs/solid/layer-group.svg
 import bullseye from "@fortawesome/fontawesome-free/svgs/solid/bullseye.svg?raw";
 import filter from "@fortawesome/fontawesome-free/svgs/solid/filter.svg?raw";
 import listCheck from "@fortawesome/fontawesome-free/svgs/solid/list-check.svg?raw";
+import check from "@fortawesome/fontawesome-free/svgs/solid/check.svg?raw";
 
 const ICONS: Record<string, string> = {
   plus,
@@ -26,6 +27,7 @@ const ICONS: Record<string, string> = {
   bullseye,
   filter,
   "list-check": listCheck,
+  check,
 };
 
 registerIconLibrary("fa", {
