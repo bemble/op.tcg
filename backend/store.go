@@ -34,6 +34,10 @@ type Item struct {
 	Language  string `json:"language"`
 	Notes     string `json:"notes"`
 	Status    string `json:"status"`
+	// Set the card is filed under, resolved by the catalogue (DON!! side
+	// products get re-bucketed, so this can't be derived from the code alone).
+	SetCode   string `json:"setCode,omitempty"`
+	SetLabel  string `json:"setLabel,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 	Card      *Card  `json:"card,omitempty"`
@@ -216,16 +220,14 @@ func (s *Store) AddItems(entries []BatchEntry) ([]Item, error) {
 // the affected row id.
 func upsertItemTx(tx *sql.Tx, cardID string, it Item) (int64, error) {
 	status := normStatus(it.Status)
-	// Wishlist tracks a wanted card per owner only (no language/quantity). Ordered
-	// keeps its language (you know what you bought) but not a quantity. Owned uses
-	// both.
+	// Wishlist tracks a wanted card per owner only (no language/quantity). Owned
+	// and ordered both carry a language and a real quantity — you know what you
+	// bought, and how many.
 	switch status {
 	case statusWishlist:
 		it.Language = ""
 		it.Quantity = 1
-	case statusOrdered:
-		it.Quantity = 1
-	default: // owned
+	default: // owned, ordered
 		if it.Quantity <= 0 {
 			it.Quantity = 1
 		}
@@ -237,7 +239,7 @@ func upsertItemTx(tx *sql.Tx, cardID string, it Item) (int64, error) {
 		cardID, it.Language, it.OwnerID, status)
 	switch err := row.Scan(&id); err {
 	case nil:
-		if status == statusOwned {
+		if status != statusWishlist {
 			if _, err := tx.Exec(`UPDATE collection_items
 				SET quantity=quantity+?, notes=CASE WHEN ?!='' THEN ? ELSE notes END, updated_at=datetime('now')
 				WHERE id=?`, it.Quantity, it.Notes, it.Notes, id); err != nil {
@@ -312,22 +314,20 @@ func (s *Store) queryItems(where string, args ...any) ([]Item, error) {
 	return out, rows.Err()
 }
 
-// UpdateItem patches mutable fields. quantity<=0 deletes the row (owned only —
-// ordered/wishlist keep quantity 1). Ordered/wishlist rows drop language.
+// UpdateItem patches mutable fields. quantity<=0 deletes the row (owned and
+// ordered alike — cancelling every ordered copy drops the row). Wishlist rows
+// keep quantity 1 and drop their language.
 func (s *Store) UpdateItem(id int64, in Item) (*Item, error) {
 	status := normStatus(in.Status)
-	if status == statusOwned && in.Quantity <= 0 {
+	if status != statusWishlist && in.Quantity <= 0 {
 		if _, err := s.db.Exec(`DELETE FROM collection_items WHERE id=?`, id); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
-	switch status {
-	case statusWishlist:
+	if status == statusWishlist {
 		in.Language = ""
 		in.Quantity = 1
-	case statusOrdered:
-		in.Quantity = 1 // keep language
 	}
 	_, err := s.db.Exec(`UPDATE collection_items
 		SET owner_id=?, quantity=?, language=?, notes=?, status=?, updated_at=datetime('now')

@@ -191,6 +191,9 @@ func (s *server) enrich(items []Item) {
 		} else {
 			items[i].Card = &Card{CardID: items[i].CardID, Name: items[i].CardID, Code: items[i].CardID}
 		}
+		card := items[i].Card
+		items[i].SetCode = setPrefix(card.Code, card.Rarity, card.Name)
+		items[i].SetLabel = s.cat.SetLabel(items[i].SetCode)
 	}
 }
 
@@ -219,8 +222,8 @@ func (s *server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []Item{}
 	}
-	// Sort by card name for a stable, readable collection view.
-	sortItemsByName(items)
+	// Group by set so the tracking lists read set by set.
+	sortItemsBySet(items)
 	writeJSON(w, http.StatusOK, items)
 }
 
@@ -524,17 +527,27 @@ func atoiDefault(s string, def int) int {
 	return def
 }
 
-func sortItemsByName(items []Item) {
+// sortItemsBySet orders items the way the sets tab displays them (OP, EB, PRB,
+// ST, then promos — newest number first), then by card code within a set. Cards
+// the catalogue doesn't know fall back to name so they still sort predictably.
+func sortItemsBySet(items []Item) {
+	key := func(it Item) (prefix, code, name string) {
+		if it.Card == nil {
+			return it.SetCode, "", ""
+		}
+		return it.SetCode, it.Card.Code, strings.ToLower(it.Card.Name)
+	}
 	sort.SliceStable(items, func(i, j int) bool {
-		ni, nj := "", ""
-		if items[i].Card != nil {
-			ni = items[i].Card.Name
+		pi, ci, ni := key(items[i])
+		pj, cj, nj := key(items[j])
+		if pi != pj {
+			return setLess(pi, pj)
 		}
-		if items[j].Card != nil {
-			nj = items[j].Card.Name
+		if ci != cj {
+			return ci < cj
 		}
-		if !strings.EqualFold(ni, nj) {
-			return strings.ToLower(ni) < strings.ToLower(nj)
+		if ni != nj {
+			return ni < nj
 		}
 		return items[i].ID < items[j].ID
 	})

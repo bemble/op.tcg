@@ -216,6 +216,19 @@ function parseOwner(v: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+// Last owner picked when adding copies, so a bulk add doesn't make you re-pick
+// it on every row. Resolved against the live owner list on each read: an owner
+// deleted since then quietly falls back to unassigned rather than leaving the
+// select blank.
+function lastOwner(): number | null {
+  const id = parseInt(localStorage.getItem("lastOwner") || "0", 10) || 0;
+  return state.owners.some((o) => o.id === id) ? id : null;
+}
+
+function rememberOwner(id: number | null) {
+  localStorage.setItem("lastOwner", String(id ?? 0));
+}
+
 // Compact segmented controls (icon + label) for the add/edit dialogs — saves
 // vertical space vs full selects. On mobile only the icon/flag shows (CSS).
 type SegOption = { value: string; icon: string; label: string };
@@ -250,8 +263,8 @@ function wireSegments(root: ParentNode, onStatusChange?: () => void) {
   });
 }
 
-// One possession's summary line in the manage dialog. Owned copies show
-// language + quantity; ordered/wishlist show just their status.
+// One possession's summary line in the manage dialog. Owned and ordered copies
+// show language + quantity; wishlist shows just its status.
 function possessionLine(it: Item): string {
   const owner = it.ownerName ? esc(it.ownerName) : t("common.unassigned");
   const notes = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
@@ -262,7 +275,8 @@ function possessionLine(it: Item): string {
   const s = STATUSES.find((x) => x.value === status);
   const badge = s ? `${s.emoji} ${esc(t("status." + status))}` : esc(status);
   const lang = status === "ordered" && it.language ? ` · ${langLabel(it.language)}` : "";
-  return `${owner} · ${badge}${lang}${notes}`;
+  const qty = status === "ordered" ? ` · ×${it.quantity}` : "";
+  return `${owner} · ${badge}${lang}${qty}${notes}`;
 }
 
 function toast(message: string, variant: "success" | "danger" = "success") {
@@ -421,20 +435,59 @@ function trackRow(it: Item): string {
   const code = c && !isDon(c) ? esc(c.code) + " " : "";
   const name = c ? esc(c.name) : esc(it.cardId);
   const note = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
-  // Ordered copies carry a language; wishlist don't.
+  // Ordered copies carry a language and a quantity; wishlist don't.
   const lang = it.status === "ordered" && it.language ? `${langLabel(it.language)} · ` : "";
+  const qty = it.status === "ordered" ? `×${it.quantity} · ` : "";
+  // Ordered copies get a one-click "received" action: it flips them to owned,
+  // carrying over their language and quantity.
+  const recv =
+    it.status === "ordered"
+      ? `<wa-button class="track-recv" size="small" variant="brand" title="${t("action.received")}" aria-label="${t("action.received")}"><wa-icon library="fa" name="check"></wa-icon></wa-button>`
+      : "";
   return `
   <div class="list-row track-row" data-id="${it.id}">
     ${thumb}
     <div class="list-main">
       <span class="list-name" title="${name}">${name}</span>
-      <span class="list-meta">${code}${lang}${owner}${note}</span>
+      <span class="list-meta">${code}${lang}${qty}${owner}${note}</span>
     </div>
     <div class="list-actions">
-      <wa-button class="track-edit" size="small" appearance="outlined">${t("action.edit")}</wa-button>
+      ${recv}
+      <wa-button class="track-edit" size="small" appearance="outlined" title="${t("action.edit")}" aria-label="${t("action.edit")}"><wa-icon library="fa" name="pen-to-square"></wa-icon></wa-button>
       <wa-button class="track-del" size="small" appearance="outlined" variant="danger">×</wa-button>
     </div>
   </div>`;
+}
+
+// Rows arrive already grouped by set (the backend sorts them), so walk them in
+// order and cut a new block each time the set changes — no re-sorting here, and
+// no need to re-derive which set a card belongs to.
+function trackBlocks(list: Item[]): string {
+  const blocks: { code: string; label: string; items: Item[] }[] = [];
+  for (const it of list) {
+    const code = it.setCode || "";
+    const last = blocks[blocks.length - 1];
+    if (last && last.code === code) {
+      last.items.push(it);
+    } else {
+      blocks.push({ code, label: it.setLabel || code, items: [it] });
+    }
+  }
+  return blocks
+    .map((b) => {
+      // The set code next to its name. SetLabel falls back to the code itself
+      // for a set the catalogue doesn't know, so don't print it twice.
+      const title =
+        b.label && b.label !== b.code
+          ? `<span class="track-block-code">${esc(b.code)}</span> ${esc(b.label)}`
+          : esc(b.code || b.label);
+      return `
+      <div class="track-block">
+        <h3 class="track-block-title">${title} <span class="muted">(${b.items.length})</span></h3>
+        <div class="card-list">${b.items.map(trackRow).join("")}</div>
+      </div>`;
+    })
+    .join("");
 }
 
 async function renderTracking() {
@@ -456,7 +509,7 @@ async function renderTracking() {
       <h2>${emoji} ${title} <span class="muted">(${list.length})</span></h2>
       ${
         list.length
-          ? `<div class="card-list">${list.map(trackRow).join("")}</div>`
+          ? trackBlocks(list)
           : `<p class="muted">${t("tracking.none")}</p>`
       }
     </section>`;
@@ -468,6 +521,16 @@ async function renderTracking() {
     el?.querySelector(".track-edit")?.addEventListener("click", () =>
       openEditDialog(it, { onSaved: renderTracking }),
     );
+    el?.querySelector(".track-recv")?.addEventListener("click", async () => {
+      try {
+        await api.updateItem(it.id, { status: "owned" });
+        await renderTracking();
+        refreshStats();
+        toast(t("toast.received", { name: it.card?.name || it.cardId }));
+      } catch (e) {
+        toast((e as Error).message, "danger");
+      }
+    });
     el?.querySelector(".track-del")?.addEventListener("click", async () => {
       try {
         await api.deleteItem(it.id);
@@ -1173,7 +1236,7 @@ function setBatchRow(c: SetCard): string {
       <span class="list-name" title="${esc(c.name)}">${esc(c.name)}</span>
     </div>
     <div class="list-actions add-grid">
-      <wa-select class="owner" value="" style="min-width:120px">${ownerOptions(null)}</wa-select>
+      <wa-select class="owner" value="${lastOwner() ?? ""}" style="min-width:120px">${ownerOptions(lastOwner())}</wa-select>
       <wa-select class="lang" value="EN" style="width:104px">${langOptions("EN")}</wa-select>
       <wa-input class="qty-in" type="number" min="1" value="1" style="width:64px"></wa-input>
       <wa-input class="note-in" placeholder="${t("common.comment")}" size="small" style="min-width:140px"></wa-input>
@@ -1214,7 +1277,7 @@ function paintBatchBar(active: boolean, global: boolean) {
     <div class="batch-bar">
       ${
         global
-          ? `<wa-select id="batch-owner" value="" size="small" style="min-width:140px">${ownerOptions(null)}</wa-select>
+          ? `<wa-select id="batch-owner" value="${lastOwner() ?? ""}" size="small" style="min-width:140px">${ownerOptions(lastOwner())}</wa-select>
              <wa-select id="batch-lang" value="EN" size="small" style="width:110px">${langOptions("EN")}</wa-select>`
           : ""
       }
@@ -1277,6 +1340,8 @@ async function runBatchAdd(global: boolean) {
 
   try {
     const added = await api.addItemsBatch(items);
+    // Whichever owner the selection went to becomes the default for next time.
+    rememberOwner(global ? gOwner || null : (items[items.length - 1]?.ownerId ?? null));
     toast(t("batch.added", { n: added.length }));
   } catch (e) {
     toast((e as Error).message, "danger");
@@ -1500,9 +1565,9 @@ function openCardDialog(c: SetCard) {
         </div>
         <div class="field-row">
           <label class="field field-grow">${t("common.owner")}
-            <wa-select class="f-owner" value="">${ownerOptions(null)}</wa-select>
+            <wa-select class="f-owner" value="${lastOwner() ?? ""}">${ownerOptions(lastOwner())}</wa-select>
           </label>
-          <label class="field f-owned-only">${t("common.quantity")}
+          <label class="field f-qty-only">${t("common.quantity")}
             <wa-input class="f-qty" type="number" min="1" value="1" style="width:5.5rem"></wa-input>
           </label>
         </div>
@@ -1521,15 +1586,13 @@ function openCardDialog(c: SetCard) {
     (dlg as any).open = false;
     setTimeout(() => dlg.remove(), 300);
   };
-  // Language/quantity only apply to physically-owned copies.
+  // Language/quantity apply to copies you own or have on order.
   const toggleFields = () => {
     const status = segValue(dlg, "status", "owned");
-    // Language: owned + ordered (you know what you bought); quantity: owned only.
-    dlg.querySelectorAll<HTMLElement>(".f-lang-only").forEach((el) => {
+    // Owned + ordered both carry a language and a quantity (you know what you
+    // bought, and how many); a wishlist entry is just a wanted card.
+    dlg.querySelectorAll<HTMLElement>(".f-lang-only, .f-qty-only").forEach((el) => {
       el.style.display = status === "wishlist" ? "none" : "";
-    });
-    dlg.querySelectorAll<HTMLElement>(".f-owned-only").forEach((el) => {
-      el.style.display = status === "owned" ? "" : "none";
     });
   };
   wireSegments(dlg, toggleFields);
@@ -1544,6 +1607,7 @@ function openCardDialog(c: SetCard) {
     const notes = (dlg.querySelector(".f-notes") as any)?.value || "";
     try {
       const item = await api.addItem({ cardId: c.cardId, ownerId, language, quantity, notes, status });
+      rememberOwner(ownerId);
       cardItemsUpsert(c.cardId, item);
       close();
       refreshCardInPlace(c.cardId);
@@ -1592,7 +1656,7 @@ function openEditDialog(it: Item, opts?: { onSaved?: () => void }) {
         <label class="field field-grow">${t("common.owner")}
           <wa-select class="f-owner" value="${it.ownerId ?? ""}">${ownerOptions(it.ownerId)}</wa-select>
         </label>
-        <label class="field f-owned-only">${t("common.quantity")}
+        <label class="field f-qty-only">${t("common.quantity")}
           <wa-input class="f-qty" type="number" min="1" value="${it.quantity}" style="width:5.5rem"></wa-input>
         </label>
       </div>
@@ -1611,12 +1675,10 @@ function openEditDialog(it: Item, opts?: { onSaved?: () => void }) {
   };
   const toggleFields = () => {
     const status = segValue(dlg, "status", "owned");
-    // Language: owned + ordered (you know what you bought); quantity: owned only.
-    dlg.querySelectorAll<HTMLElement>(".f-lang-only").forEach((el) => {
+    // Owned + ordered both carry a language and a quantity (you know what you
+    // bought, and how many); a wishlist entry is just a wanted card.
+    dlg.querySelectorAll<HTMLElement>(".f-lang-only, .f-qty-only").forEach((el) => {
       el.style.display = status === "wishlist" ? "none" : "";
-    });
-    dlg.querySelectorAll<HTMLElement>(".f-owned-only").forEach((el) => {
-      el.style.display = status === "owned" ? "" : "none";
     });
   };
   wireSegments(dlg, toggleFields);

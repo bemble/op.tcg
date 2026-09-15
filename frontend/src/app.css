@@ -489,6 +489,25 @@ wa-tab-panel::part(base) {
   font-size: 1rem;
   margin: 0 0 0.6rem;
 }
+
+/* ---- tracking tab: one block per set ---- */
+.track-block + .track-block {
+  margin-top: 1rem;
+}
+.track-block-code {
+  color: var(--wa-color-text-normal, #222);
+  font-weight: 700;
+}
+.track-block-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--wa-color-text-quiet, #666);
+  margin: 0 0 0.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--wa-color-surface-border, #e2e2e2);
+}
 .stat-row {
   display: flex;
   align-items: baseline;

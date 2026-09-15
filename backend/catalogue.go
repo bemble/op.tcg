@@ -332,6 +332,17 @@ func (c *Catalogue) SetList() []SetMeta {
 	return out
 }
 
+// SetLabel returns a set prefix's display name, falling back to the prefix
+// itself for a set the catalogue doesn't know.
+func (c *Catalogue) SetLabel(prefix string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if agg, ok := c.sets[prefix]; ok && agg.name != "" {
+		return agg.name
+	}
+	return prefix
+}
+
 // DonCards returns the cards currently in the catalogue that are DON!! cards
 // (sourced from the community API). Used to preserve them when an official
 // resync can't reach the DON source.

@@ -34,6 +34,8 @@ export interface Item {
   language: string;
   notes: string;
   status: CardStatus;
+  setCode?: string;
+  setLabel?: string;
   createdAt: string;
   updatedAt: string;
   card?: Card;
