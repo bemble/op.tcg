@@ -122,12 +122,14 @@ export const api = {
   deleteOwner: (id: number) =>
     req<void>(`/api/owners/${id}`, { method: "DELETE" }),
 
-  // curated cards (cards our sources miss). Either from a TCGplayer product URL
-  // ({url}) or by hand ({code, name, rarity?, imageUrl?}) for cards only on
-  // other sites (e.g. Cardmarket).
+  // curated cards (cards our sources miss). From a TCGplayer product URL
+  // ({url}), by hand ({code, name, rarity?, imageUrl?}) for cards only on other
+  // sites (e.g. Cardmarket), or as an image-only override ({cardId, imageUrl})
+  // for a catalogued card whose source serves no art.
   listCurated: () => req<CuratedCard[]>("/api/curated"),
   addCurated: (payload: {
     url?: string;
+    cardId?: string;
     code?: string;
     name?: string;
     rarity?: string;
@@ -146,4 +148,5 @@ export interface CuratedCard {
   productId: number;
   image: string;
   sourceUrl: string;
+  imageOnly?: boolean;
 }

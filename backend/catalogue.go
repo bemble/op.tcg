@@ -94,10 +94,11 @@ type Catalogue struct {
 	path string
 
 	mu       sync.RWMutex
-	base     []Card          // synced cards (official + DON); persisted to JSON
-	extra    []Card          // curated extras (built-in + DB); NOT persisted
-	cards    []Card          // base+extra merged, sorted by code then name
-	byID     map[string]Card // card_id -> card
+	base     []Card            // synced cards (official + DON); persisted to JSON
+	extra    []Card            // curated extras (built-in + DB); NOT persisted
+	imgOver  map[string]string // card_id -> image URL overriding the synced one
+	cards    []Card            // base+extra merged, sorted by code then name
+	byID     map[string]Card   // card_id -> card
 	sets     map[string]*setAgg
 	setOrder []string // set prefixes in display order
 	syncedAt string
@@ -230,9 +231,10 @@ func (c *Catalogue) set(cards []Card, syncedAt string) {
 
 // SetExtra replaces the curated extra cards (built-in + DB) and rebuilds. These
 // merge into the catalogue live and are never written to catalogue.json.
-func (c *Catalogue) SetExtra(extra []Card) {
+func (c *Catalogue) SetExtra(extra []Card, imgOver map[string]string) {
 	c.mu.Lock()
 	c.extra = extra
+	c.imgOver = imgOver
 	c.rebuildLocked()
 	c.mu.Unlock()
 }
@@ -251,6 +253,17 @@ func (c *Catalogue) rebuildLocked() {
 			byID[card.CardID] = card
 		}
 	}
+	// Image-only overrides patch a card already in the catalogue: the upstream
+	// source lists the card but serves no art (recent DON!! products, say). Only
+	// the image changes — name, code and rarity stay as synced.
+	for id, img := range c.imgOver {
+		if card, ok := byID[id]; ok && img != "" {
+			card.ImageSmall = img
+			card.ImageLarge = img
+			byID[id] = card
+		}
+	}
+
 	deduped := make([]Card, 0, len(byID))
 	for _, card := range byID {
 		deduped = append(deduped, card)

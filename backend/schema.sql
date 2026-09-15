@@ -47,5 +47,8 @@ CREATE TABLE IF NOT EXISTS curated_cards (
     image_url  TEXT NOT NULL DEFAULT '',   -- image URL served for this card (may be a local /api path)
     image_blob BLOB,                        -- downloaded + downscaled image (manual imports)
     source_url TEXT NOT NULL DEFAULT '',   -- where the card was imported from
+    -- 1 = this row only overrides an existing catalogue card's image; its
+    -- code/name/rarity are not used to materialise a card.
+    image_only INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

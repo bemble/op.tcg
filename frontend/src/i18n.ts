@@ -167,6 +167,28 @@ const dict: Record<string, Entry> = {
     en: "For a card missing from TCGplayer. The <strong>code</strong> decides the set (e.g. <code>OP08-043</code> → a parallel if the code already exists, <code>P</code> for a promo). The image is optional (a direct image URL).",
   },
   "prefs.imageUrl": { fr: "URL de l'image (optionnel)", en: "Image URL (optional)" },
+  "dialog.replaceImage": { fr: "Remplacer l'image", en: "Replace image" },
+  "dialog.replaceImageDesc": {
+    fr: "Quand la source ne fournit aucun visuel pour cette carte. L'image est téléchargée et stockée localement ; la carte n'est pas modifiée autrement.",
+    en: "For when the source serves no art for this card. The image is downloaded and stored locally; nothing else about the card changes.",
+  },
+  "toast.imageUrlRequired": { fr: "URL d'image requise", en: "Image URL required" },
+  "dialog.imageOverridden": { fr: "Image personnalisée en place", en: "Custom image in place" },
+  "toast.imageRestored": {
+    fr: "Image d'origine restaurée : {name}",
+    en: "Original image restored: {name}",
+  },
+  "prefs.overrideSummary": {
+    fr: "Remplacer l'image d'une carte existante",
+    en: "Replace an existing card's image",
+  },
+  "prefs.overrideDesc": {
+    fr: "Pour une carte déjà au catalogue dont la source ne fournit pas de visuel. L'image est téléchargée et stockée localement ; le reste de la carte n'est pas modifié.",
+    en: "For a card already in the catalogue whose source serves no art. The image is downloaded and stored locally; nothing else about the card changes.",
+  },
+  "prefs.overrideCardId": { fr: "Identifiant de la carte", en: "Card id" },
+  "prefs.overrideImageUrl": { fr: "URL de l'image", en: "Image URL" },
+  "prefs.overrideBadge": { fr: "image seule", en: "image only" },
   "prefs.sourceUrl": { fr: "URL source (optionnel, ex. Cardmarket)", en: "Source URL (optional, e.g. Cardmarket)" },
   "prefs.coOwnersTitle": { fr: "Co-propriétaires de la collection", en: "Collection co-owners" },
   "prefs.coOwnersDesc": {
@@ -179,6 +201,11 @@ const dict: Record<string, Entry> = {
   "prefs.langTitle": { fr: "Langue de l'interface", en: "Interface language" },
   "toast.nameCodeRequired": { fr: "Nom et code requis", en: "Name and code required" },
   "toast.cardAdded": { fr: "Ajoutée : {code} — {name}", en: "Added: {code} — {name}" },
+  "toast.imageOverridden": { fr: "Image remplacée : {name}", en: "Image replaced: {name}" },
+  "toast.cardIdImageRequired": {
+    fr: "Identifiant et URL d'image requis",
+    en: "Card id and image URL required",
+  },
   "toast.goalSet": { fr: "Objectif : {label}", en: "Goal: {label}" },
   "toast.received": { fr: "Reçue : {name}", en: "Received: {name}" },
 

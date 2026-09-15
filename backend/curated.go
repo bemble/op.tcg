@@ -31,6 +31,7 @@ type curatedCard struct {
 	imageURL  string // image URL served for this card (may be a local /api path)
 	sourceURL string // where it was imported from (TCGplayer/Cardmarket/…)
 	imageBlob []byte // downloaded + downscaled image bytes (manual imports)
+	imageOnly bool   // overrides an existing card's image only (no new card)
 }
 
 // Built-in curated cards (the "P-073/074/075 Tin Pack Set Vol. 2" alt arts).
@@ -80,10 +81,15 @@ func (s *server) refreshCuratedExtra() error {
 		return err
 	}
 	extra := builtinCuratedCards()
+	imgOver := map[string]string{}
 	for _, c := range db {
+		if c.imageOnly {
+			imgOver[c.cardID] = c.imageURL
+			continue
+		}
 		extra = append(extra, curatedToCard(c))
 	}
-	s.cat.SetExtra(extra)
+	s.cat.SetExtra(extra, imgOver)
 	return nil
 }
 
@@ -110,7 +116,7 @@ func curatedJSON(c curatedCard) map[string]any {
 	return map[string]any{
 		"cardId": c.cardID, "code": c.code, "name": c.name,
 		"rarity": c.rarity, "productId": c.productID, "image": img,
-		"sourceUrl": c.sourceURL,
+		"sourceUrl": c.sourceURL, "imageOnly": c.imageOnly,
 	}
 }
 
@@ -122,7 +128,15 @@ func (s *server) handleListCurated(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(list))
 	for _, c := range list {
-		out = append(out, curatedJSON(c))
+		m := curatedJSON(c)
+		// An image-only override stores no code/name of its own — show the
+		// overridden card's, so the list stays readable.
+		if c.imageOnly {
+			if card, ok := s.cat.Get(c.cardID); ok {
+				m["code"], m["name"], m["rarity"] = card.Code, card.Name, card.Rarity
+			}
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -130,6 +144,7 @@ func (s *server) handleListCurated(w http.ResponseWriter, r *http.Request) {
 // curatedReq is a request to add a curated card, in either mode (see buildCurated).
 type curatedReq struct {
 	URL       string `json:"url"`
+	CardID    string `json:"cardId"` // image-only override of an existing card
 	Code      string `json:"code"`
 	Name      string `json:"name"`
 	Rarity    string `json:"rarity"`
@@ -137,15 +152,22 @@ type curatedReq struct {
 	SourceURL string `json:"sourceUrl"`
 }
 
-// handleAddCurated adds a card the automated sources miss. Two modes:
+// handleAddCurated adds a card the automated sources miss. Three modes:
 //   - {url}: a TCGplayer product URL/id — we look up number/name/rarity/image;
 //   - {code, name, rarity?, imageUrl?}: manual entry, for cards only on other
 //     sites (e.g. Cardmarket, which we can't scrape). The code decides the set;
 //     a parallel slot is picked if the code already exists.
+//   - {cardId, imageUrl}: image-only override for a card already catalogued
+//     whose source lists it but serves no art. Nothing else about the card
+//     changes, and re-posting replaces the image.
 func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
 	var req curatedReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
+		return
+	}
+	if id := strings.TrimSpace(req.CardID); id != "" {
+		s.addCuratedImageOverride(w, r, id, req)
 		return
 	}
 	c, err := s.buildCurated(r.Context(), req)
@@ -158,6 +180,48 @@ func (s *server) handleAddCurated(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, curatedJSON(c))
+}
+
+// addCuratedImageOverride points an already-catalogued card at a locally stored
+// image. The image is downloaded and downscaled now rather than hotlinked: the
+// /api/img proxy only whitelists a few hosts, and the source may block
+// hotlinking later.
+func (s *server) addCuratedImageOverride(w http.ResponseWriter, r *http.Request, cardID string, req curatedReq) {
+	if _, ok := s.cat.Get(cardID); !ok {
+		writeErr(w, http.StatusNotFound, "carte inconnue au catalogue: "+cardID)
+		return
+	}
+	raw := strings.TrimSpace(req.ImageURL)
+	if raw == "" {
+		writeErr(w, http.StatusBadRequest, "imageUrl requis")
+		return
+	}
+	blob, err := fetchAndThumb(r.Context(), raw)
+	if err != nil || len(blob) == 0 {
+		if err == nil {
+			err = fmt.Errorf("image vide")
+		}
+		writeErr(w, http.StatusBadGateway, "téléchargement de l'image: "+err.Error())
+		return
+	}
+	src := strings.TrimSpace(req.SourceURL)
+	if src == "" {
+		src = raw
+	}
+	local := "/api/curated/" + cardID + "/image"
+	if err := s.st.SetCuratedImageOverride(cardID, local, src, blob); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.refreshCuratedExtra(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	card, _ := s.cat.Get(cardID)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"cardId": cardID, "code": card.Code, "name": card.Name,
+		"image": card.ImageSmall, "sourceUrl": src, "imageOnly": true,
+	})
 }
 
 // buildCurated resolves a curated card from a request (TCGplayer lookup or

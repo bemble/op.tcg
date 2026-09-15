@@ -494,6 +494,23 @@ wa-tab-panel::part(base) {
 .track-block + .track-block {
   margin-top: 1rem;
 }
+.img-current-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.override-badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--wa-color-surface-border, #e2e2e2);
+  background: var(--wa-color-surface-lowered, #f4f4f4);
+  color: var(--wa-color-text-quiet, #666);
+  font-size: 0.7rem;
+  vertical-align: middle;
+}
 .track-block-code {
   color: var(--wa-color-text-normal, #222);
   font-weight: 700;

@@ -64,6 +64,7 @@ func openStore(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN image_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN image_blob BLOB`)
+	_, _ = db.Exec(`ALTER TABLE curated_cards ADD COLUMN image_only INTEGER NOT NULL DEFAULT 0`)
 	return &Store{db: db}, nil
 }
 
@@ -448,7 +449,7 @@ func (s *Store) BulkSetLanguageItems(itemIDs []int64, language string) (int, err
 
 // ListCuratedCards returns the user-added cards, newest first.
 func (s *Store) ListCuratedCards() ([]curatedCard, error) {
-	rows, err := s.db.Query(`SELECT card_id, code, name, rarity, product_id, image_url, source_url
+	rows, err := s.db.Query(`SELECT card_id, code, name, rarity, product_id, image_url, source_url, image_only
 		FROM curated_cards ORDER BY created_at DESC, card_id`)
 	if err != nil {
 		return nil, err
@@ -457,7 +458,7 @@ func (s *Store) ListCuratedCards() ([]curatedCard, error) {
 	out := []curatedCard{}
 	for rows.Next() {
 		var c curatedCard
-		if err := rows.Scan(&c.cardID, &c.code, &c.name, &c.rarity, &c.productID, &c.imageURL, &c.sourceURL); err != nil {
+		if err := rows.Scan(&c.cardID, &c.code, &c.name, &c.rarity, &c.productID, &c.imageURL, &c.sourceURL, &c.imageOnly); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -473,6 +474,24 @@ func (s *Store) AddCuratedCard(c curatedCard) error {
 	}
 	_, err := s.db.Exec(`INSERT INTO curated_cards (card_id, code, name, rarity, product_id, image_url, source_url, image_blob)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, c.cardID, c.code, c.name, c.rarity, c.productID, c.imageURL, c.sourceURL, blob)
+	return err
+}
+
+// SetCuratedImageOverride records (or replaces) an image-only override for a
+// card that already exists in the catalogue. Unlike AddCuratedCard it upserts,
+// so re-pointing a card at a better scan doesn't need a delete first.
+func (s *Store) SetCuratedImageOverride(cardID, imageURL, sourceURL string, blob []byte) error {
+	var b any
+	if len(blob) > 0 {
+		b = blob
+	}
+	_, err := s.db.Exec(`INSERT INTO curated_cards (card_id, code, name, rarity, product_id, image_url, source_url, image_blob, image_only)
+		VALUES (?, '', '', '', 0, ?, ?, ?, 1)
+		ON CONFLICT(card_id) DO UPDATE SET
+			image_url=excluded.image_url,
+			source_url=excluded.source_url,
+			image_blob=excluded.image_blob,
+			image_only=1`, cardID, imageURL, sourceURL, b)
 	return err
 }
 

@@ -1579,6 +1579,22 @@ function openCardDialog(c: SetCard) {
           <wa-button class="f-add" variant="brand">${t("action.add")}</wa-button>
         </div>
       </div>
+    </wa-details>
+    <wa-details class="add-details img-panel" summary="${t("dialog.replaceImage")}">
+      <div class="form">
+        <div class="f-img-current"></div>
+        <p class="muted small">${t("dialog.replaceImageDesc")}</p>
+        <label>${t("prefs.overrideImageUrl")}
+          <wa-input class="f-img-url" placeholder="https://…/image.jpg"></wa-input>
+        </label>
+        <label>${t("prefs.sourceUrl")}
+          <wa-input class="f-img-source" placeholder="https://www.cardmarket.com/…"></wa-input>
+        </label>
+        <div class="add-actions">
+          <wa-button class="f-cancel" appearance="outlined">${t("action.close")}</wa-button>
+          <wa-button class="f-img-save" variant="brand">${t("action.save")}</wa-button>
+        </div>
+      </div>
     </wa-details>`;
   document.body.appendChild(dlg);
   (dlg as any).open = true;
@@ -1598,7 +1614,74 @@ function openCardDialog(c: SetCard) {
   wireSegments(dlg, toggleFields);
   toggleFields();
 
-  dlg.querySelector(".f-cancel")?.addEventListener("click", close);
+  // Does this card already carry an override? Asked when the panel is opened
+  // rather than on every dialog open, and read from the curated list so a real
+  // curated card (whose image is also served from /api/curated) is never
+  // mistaken for one — deleting that would drop the whole card.
+  const imgDetails = dlg.querySelector(".img-panel");
+  const paintOverrideState = async () => {
+    const box = dlg.querySelector<HTMLDivElement>(".f-img-current");
+    if (!box) return;
+    let current;
+    try {
+      current = (await api.listCurated()).find((x) => x.imageOnly && x.cardId === c.cardId);
+    } catch {
+      return; // leave the panel usable; adding an override doesn't need this
+    }
+    if (!current) {
+      box.innerHTML = "";
+      return;
+    }
+    const site = sourceSite(current.sourceUrl);
+    const badge =
+      current.sourceUrl && site
+        ? `<a class="source-badge ${siteClass(site)}" href="${esc(current.sourceUrl)}" target="_blank" rel="noopener">${esc(site)}</a>`
+        : "";
+    box.innerHTML = `
+      <div class="img-current-row">
+        <span class="muted small">${t("dialog.imageOverridden")}</span>
+        ${badge}
+        <wa-button class="f-img-del" size="small" appearance="outlined" variant="danger">${t("action.delete")}</wa-button>
+      </div>`;
+    box.querySelector(".f-img-del")?.addEventListener("click", async () => {
+      try {
+        await api.deleteCurated(c.cardId);
+        close();
+        refreshCollection();
+        toast(t("toast.imageRestored", { name: c.name }));
+      } catch (e) {
+        toast((e as Error).message, "danger");
+      }
+    });
+  };
+  imgDetails?.addEventListener("wa-show", paintOverrideState);
+
+  // Replace this card's art: same image-only override as Préférences, but the
+  // card id comes from the dialog instead of being typed by hand.
+  dlg.querySelector(".f-img-save")?.addEventListener("click", async () => {
+    const btn = dlg.querySelector(".f-img-save") as any;
+    const imageUrl = ((dlg.querySelector(".f-img-url") as any)?.value || "").trim();
+    const sourceUrl = ((dlg.querySelector(".f-img-source") as any)?.value || "").trim();
+    if (!imageUrl) {
+      toast(t("toast.imageUrlRequired"), "danger");
+      return;
+    }
+    btn.loading = true;
+    try {
+      await api.addCurated({ cardId: c.cardId, imageUrl, sourceUrl });
+      close();
+      // The catalogue changed — re-render so the new art shows in the grid too.
+      refreshCollection();
+      toast(t("toast.imageOverridden", { name: c.name }));
+    } catch (e) {
+      toast((e as Error).message, "danger");
+    } finally {
+      btn.loading = false;
+    }
+  });
+
+  // Both accordions carry a close button — wire every one, not just the first.
+  dlg.querySelectorAll(".f-cancel").forEach((el) => el.addEventListener("click", close));
   dlg.querySelector(".f-add")?.addEventListener("click", async () => {
     const status = segValue(dlg, "status", "owned") as CardStatus;
     const ownerId = parseOwner((dlg.querySelector(".f-owner") as any)?.value || "");
@@ -1854,6 +1937,23 @@ function renderPrefs() {
         </div>
       </div>
     </wa-details>
+    <wa-details class="curated-manual" summary="${t("prefs.overrideSummary")}">
+      <p class="muted small">${t("prefs.overrideDesc")}</p>
+      <div class="form">
+        <label>${t("prefs.overrideCardId")}
+          <wa-input id="o-cardid" placeholder="OP17-DON-712748"></wa-input>
+        </label>
+        <label>${t("prefs.overrideImageUrl")}
+          <wa-input id="o-image" placeholder="https://…/image.jpg"></wa-input>
+        </label>
+        <label>${t("prefs.sourceUrl")}
+          <wa-input id="o-source" placeholder="https://www.cardmarket.com/…"></wa-input>
+        </label>
+        <div class="add-actions">
+          <wa-button id="curated-override" variant="brand">${t("action.save")}</wa-button>
+        </div>
+      </div>
+    </wa-details>
     <div id="curated-list" class="owner-list"></div>
 
     <h2 style="margin-top:2rem">${t("prefs.coOwnersTitle")}</h2>
@@ -1920,13 +2020,14 @@ function renderPrefs() {
     payload: Parameters<typeof api.addCurated>[0],
     btnSel: string,
     onOk: () => void,
+    okMsg?: (c: CuratedCard) => string,
   ) => {
     const btn = host.querySelector(btnSel) as any;
     if (btn) btn.loading = true;
     try {
       const c = await api.addCurated(payload);
       onOk();
-      toast(t("toast.cardAdded", { code: c.code, name: c.name }));
+      toast(okMsg ? okMsg(c) : t("toast.cardAdded", { code: c.code, name: c.name }));
       await renderCuratedList();
       // The catalogue changed — refresh the collection view.
       if (colSet) renderSetDetail(colSet);
@@ -1962,6 +2063,28 @@ function renderPrefs() {
       },
     );
   };
+  // Image-only override: point an already-catalogued card at a local image.
+  const addCuratedOverride = () => {
+    const val = (sel: string) => ((host.querySelector(sel) as any)?.value || "").trim();
+    const cardId = val("#o-cardid");
+    const imageUrl = val("#o-image");
+    if (!cardId || !imageUrl) {
+      toast(t("toast.cardIdImageRequired"), "danger");
+      return;
+    }
+    submitCurated(
+      { cardId, imageUrl, sourceUrl: val("#o-source") },
+      "#curated-override",
+      () => {
+        ["#o-cardid", "#o-image", "#o-source"].forEach((s) => {
+          const el = host.querySelector(s) as any;
+          if (el) el.value = "";
+        });
+      },
+      (c) => t("toast.imageOverridden", { name: c.name || c.cardId }),
+    );
+  };
+  host.querySelector("#curated-override")?.addEventListener("click", addCuratedOverride);
   host.querySelector("#curated-add")?.addEventListener("click", addCurated);
   host.querySelector("#curated-url")?.addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") addCurated();
@@ -2015,11 +2138,16 @@ async function renderCuratedList() {
         ? `<img class="curated-thumb" src="${esc(proxied(c.image, 80))}" alt="" loading="lazy"
              onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'curated-thumb placeholder'}))" />`
         : `<div class="curated-thumb placeholder"></div>`;
+      // An override doesn't add a card — say so, so deleting it reads as
+      // "restore the original image" rather than "remove a card".
+      const kind = c.imageOnly
+        ? ` <span class="override-badge">${t("prefs.overrideBadge")}</span>`
+        : "";
       return `
       <div class="owner-row curated-row" data-id="${esc(c.cardId)}">
         <span class="curated-info">
           ${thumb}
-          <span>${esc(c.code)} · ${esc(c.name)} <span class="muted small">${esc(c.cardId)}</span></span>
+          <span>${esc(c.code)} · ${esc(c.name)} <span class="muted small">${esc(c.cardId)}</span>${kind}</span>
         </span>
         <span class="curated-actions">
           ${badge}
