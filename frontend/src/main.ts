@@ -579,11 +579,14 @@ async function renderTracking() {
       }
     });
     el?.querySelector(".track-del")?.addEventListener("click", async () => {
+      const btn = el?.querySelector(".track-del") as any;
+      if (btn) btn.loading = true;
       try {
         await api.deleteItem(it.id);
-        await renderTracking();
+        removeTrackRow(it.id);
         refreshStats();
       } catch (e) {
+        if (btn) btn.loading = false;
         toast((e as Error).message, "danger");
       }
     });
