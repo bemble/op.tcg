@@ -81,16 +81,33 @@ func donSetPrefix(setCode string) string {
 	return strings.ToUpper(m[1]) + m[2]
 }
 
-// isGoldDon reports whether a DON product name is the "(Gold)" variant.
-func isGoldDon(name string) bool {
-	return strings.Contains(strings.ToLower(name), "(gold)")
+// donPremiumMarkers are the name markers for a DON that is a premium version of
+// a standard one rather than a card of its own: "(Gold)" everywhere, and
+// "(Special Foil)", which OP17 uses for the same role (its "(Rocks) (Special
+// Foil)" is the premium of "(Rocks)"). Matched with their parentheses so the
+// foils we synthesize ourselves, named "… (Foil)", are left alone.
+var donPremiumMarkers = []string{"(gold)", "(special foil)"}
+
+// isDonParallel reports whether a DON product name is a premium variant, which
+// ranks as a parallel of its standard instead of counting as a base card.
+func isDonParallel(name string) bool {
+	n := strings.ToLower(name)
+	for _, m := range donPremiumMarkers {
+		if strings.Contains(n, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // donCharKey normalises a DON name to a per-character key by dropping the
-// "(Gold)" marker and collapsing whitespace, so a standard and its Gold pair up
-// ("DON!! Card (Marco)" == "DON!! Card (Marco) (Gold)").
+// premium markers and collapsing whitespace, so a standard and its premium pair
+// up ("DON!! Card (Marco)" == "DON!! Card (Marco) (Gold)").
 func donCharKey(name string) string {
-	n := strings.ReplaceAll(strings.ToLower(name), "(gold)", "")
+	n := strings.ToLower(name)
+	for _, m := range donPremiumMarkers {
+		n = strings.ReplaceAll(n, m, "")
+	}
 	return strings.Join(strings.Fields(n), " ")
 }
 
@@ -160,7 +177,7 @@ func fetchDonCards(ctx context.Context) ([]Card, map[string]string, error) {
 	stdPid := map[prbKey]int64{}
 	for _, r := range rows {
 		prefix := donSetPrefix(r.SetCode)
-		if !strings.HasPrefix(prefix, "PRB") || isGoldDon(r.ProductName) {
+		if !strings.HasPrefix(prefix, "PRB") || isDonParallel(r.ProductName) {
 			continue
 		}
 		stdPid[prbKey{prefix, donCharKey(r.ProductName)}] = int64(r.ProductID)
@@ -174,10 +191,10 @@ func fetchDonCards(ctx context.Context) ([]Card, map[string]string, error) {
 			continue
 		}
 		prefix := donSetPrefix(r.SetCode)
-		gold := isGoldDon(r.ProductName)
+		parallel := isDonParallel(r.ProductName)
 
 		if strings.HasPrefix(prefix, "PRB") {
-			if gold {
+			if parallel {
 				base := stdPid[prbKey{prefix, donCharKey(r.ProductName)}]
 				if base == 0 {
 					base = pid // no matching standard: keep gold on its own code
@@ -199,11 +216,14 @@ func fetchDonCards(ctx context.Context) ([]Card, map[string]string, error) {
 			continue
 		}
 
-		// Non-PRB: standard at level 0, gold as a single parallel (master).
+		// Non-PRB: standard at level 0, premium as a single parallel (master).
 		code := prefix + "-DON-" + strconv.FormatInt(pid, 10)
 		cardID := code
-		if gold {
+		if parallel {
 			cardID += "_p1"
+			// A premium once mistaken for a standard (OP17's Special Foil) sat at
+			// the bare code — move any copy owned there onto the parallel id.
+			remap[code] = cardID
 		}
 		out = append(out, donCard(cardID, code, r.ProductName, donImageURL(pid), pid, r.MarketPrice, r.SetName))
 	}
