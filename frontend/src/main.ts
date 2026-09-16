@@ -147,6 +147,11 @@ function langLabel(code: string): string {
   const f = LANG_FLAGS[code];
   return f ? `${f} ${esc(code)}` : esc(code);
 }
+// Flag alone, for places already tight on width. Falls back to the code so an
+// unknown language still says something rather than disappearing.
+function langFlag(code: string): string {
+  return LANG_FLAGS[code] || esc(code);
+}
 function langOptions(selected: string): string {
   return LANGUAGES.map(
     (v) => `<wa-option value="${v}"${v === selected ? " selected" : ""}>${langLabel(v)}</wa-option>`,
@@ -432,12 +437,17 @@ function trackRow(it: Item): string {
   // Zoom enabled (data-full): the row has explicit action buttons, so tapping
   // the thumbnail opens the lightbox instead of an edit dialog.
   const thumb = c ? thumbTag(c) : `<div class="list-thumb placeholder"></div>`;
-  const code = c && !isDon(c) ? esc(c.code) + " " : "";
+  // DON!! "codes" are TCGplayer product ids, not card numbers — skip the line.
+  const code = c && !isDon(c) ? `<span class="list-code">${esc(c.code)}</span>` : "";
   const name = c ? esc(c.name) : esc(it.cardId);
   const note = it.notes ? ` · 💬 ${esc(it.notes)}` : "";
-  // Ordered copies carry a language and a quantity; wishlist don't.
-  const lang = it.status === "ordered" && it.language ? `${langLabel(it.language)} · ` : "";
-  const qty = it.status === "ordered" ? `×${it.quantity} · ` : "";
+  // "1x 🇯🇵 · Milo" for an order; a wishlist entry has neither quantity nor
+  // language, so it comes down to the owner alone.
+  const count =
+    it.status === "ordered"
+      ? [`${it.quantity}x`, it.language ? langFlag(it.language) : ""].filter(Boolean).join(" ")
+      : "";
+  const details = [count, owner].filter(Boolean).join(" · ") + note;
   // Ordered copies get a one-click "received" action: it flips them to owned,
   // carrying over their language and quantity.
   const recv =
@@ -448,8 +458,9 @@ function trackRow(it: Item): string {
   <div class="list-row track-row" data-id="${it.id}">
     ${thumb}
     <div class="list-main">
+      ${code}
       <span class="list-name" title="${name}">${name}</span>
-      <span class="list-meta">${code}${lang}${qty}${owner}${note}</span>
+      <span class="list-meta">${details}</span>
     </div>
     <div class="list-actions">
       ${recv}
@@ -490,6 +501,39 @@ function trackBlocks(list: Item[]): string {
     .join("");
 }
 
+// Drop one tracked row in place. Receiving a card takes it out of the tracking
+// lists, but re-rendering the tab would refetch the whole collection and reset
+// the scroll position — so patch the DOM instead: remove the row, fix the block
+// and section counts, drop a block that just lost its last row, and restore the
+// section's empty state when nothing is left.
+function removeTrackRow(id: number) {
+  const row = document.querySelector<HTMLElement>(`#tracking .track-row[data-id="${id}"]`);
+  if (!row) return;
+  const block = row.closest<HTMLElement>(".track-block");
+  const section = row.closest<HTMLElement>(".stat-section");
+  row.remove();
+
+  if (block) {
+    const left = block.querySelectorAll(".track-row").length;
+    if (!left) block.remove();
+    else {
+      const count = block.querySelector(".track-block-title .muted");
+      if (count) count.textContent = `(${left})`;
+    }
+  }
+  if (section) {
+    const left = section.querySelectorAll(".track-row").length;
+    const count = section.querySelector("h2 .muted");
+    if (count) count.textContent = `(${left})`;
+    if (!left) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = t("tracking.none");
+      section.appendChild(empty);
+    }
+  }
+}
+
 async function renderTracking() {
   const host = document.querySelector<HTMLDivElement>("#tracking");
   if (!host) return;
@@ -522,12 +566,15 @@ async function renderTracking() {
       openEditDialog(it, { onSaved: renderTracking }),
     );
     el?.querySelector(".track-recv")?.addEventListener("click", async () => {
+      const btn = el?.querySelector(".track-recv") as any;
+      if (btn) btn.loading = true;
       try {
         await api.updateItem(it.id, { status: "owned" });
-        await renderTracking();
+        removeTrackRow(it.id);
         refreshStats();
         toast(t("toast.received", { name: it.card?.name || it.cardId }));
       } catch (e) {
+        if (btn) btn.loading = false;
         toast((e as Error).message, "danger");
       }
     });

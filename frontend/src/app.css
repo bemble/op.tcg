@@ -494,6 +494,20 @@ wa-tab-panel::part(base) {
 .track-block + .track-block {
   margin-top: 1rem;
 }
+/* Tracking rows stack three lines: code, name, then order details. Each line
+   clips with an ellipsis — .list-meta is nowrap, so without this the details
+   run out of .list-main and under the action buttons on a narrow screen. */
+.track-row .list-code,
+.track-row .list-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-row .list-actions {
+  flex: none;
+  align-self: center;
+}
+
 .img-current-row {
   display: flex;
   align-items: center;
